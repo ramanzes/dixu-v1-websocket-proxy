@@ -28,7 +28,7 @@ public class ProxyController {
         this.webSocketProxyHandler = webSocketProxyHandler;
     }
 
-    @RequestMapping(value = "/proxy/{deviceId}/**", method = {RequestMethod.GET, RequestMethod.POST})
+    @RequestMapping(value = "/p/{deviceId}/**", method = {RequestMethod.GET, RequestMethod.POST})
     public ResponseEntity<String> proxyRequest(@PathVariable String deviceId,
                                                HttpServletRequest request) {
         WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
@@ -40,7 +40,7 @@ public class ProxyController {
         try {
             // Сборка HTTP-запроса
             StringBuilder requestBuilder = new StringBuilder();
-            requestBuilder.append(request.getMethod()).append(" ").append(request.getRequestURI().replace("/proxy/" + deviceId, "")).append(" HTTP/1.1\n");
+            requestBuilder.append(request.getMethod()).append(" ").append(request.getRequestURI().replace("/p/" + deviceId, "")).append(" HTTP/1.1\n");
             Enumeration<String> headerNames = request.getHeaderNames();
             while (headerNames.hasMoreElements()) {
                 String headerName = headerNames.nextElement();
