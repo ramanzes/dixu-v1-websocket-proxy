@@ -48,13 +48,33 @@
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
-			<optional>true</optional>
+<!--			<optional>true</optional>-->
+			<version>1.18.36</version> <!-- Убедитесь, что используете актуальную версию -->
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+
+<!--		зависимости для логирования -->
+<!--		<dependency>-->
+<!--			<groupId>org.slf4j</groupId>-->
+<!--			<artifactId>slf4j-api</artifactId>-->
+<!--			<version>1.7.30</version> &lt;!&ndash; Убедитесь, что используете актуальную версию &ndash;&gt;-->
+<!--		</dependency>-->
+<!--		<dependency>-->
+<!--			<groupId>ch.qos.logback</groupId>-->
+<!--			<artifactId>logback-classic</artifactId>-->
+<!--			<version>1.2.3</version> &lt;!&ndash; Убедитесь, что используете актуальную версию &ndash;&gt;-->
+<!--		</dependency>-->
+<!--		<dependency>-->
+<!--			<groupId>ch.qos.logback</groupId>-->
+<!--			<artifactId>logback-core</artifactId>-->
+<!--			<version>1.2.3</version> &lt;!&ndash; Убедитесь, что используете актуальную версию &ndash;&gt;-->
+<!--		</dependency>-->
+
+		<!--!!!!!!!!!!!!!!!!!!!!!!!!-->
 	</dependencies>
 
 	<build>
