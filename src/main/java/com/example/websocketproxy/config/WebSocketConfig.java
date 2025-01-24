@@ -1,6 +1,6 @@
 package com.example.websocketproxy.config;
 
-import com.example.websocketproxy.WebSocketProxyHandler;
+import com.example.websocketproxy.websocket.WebSocketProxyHandler;
 import com.example.websocketproxy.websocket.ProxyWebSocketHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,8 +10,9 @@ import org.springframework.web.socket.config.annotation.*;
 @Configuration
 @EnableWebSocket
 public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBrokerConfigurer {
-
-    private final ProxyWebSocketHandler proxyWebSocketHandler;
+   public static final int BUFFER_SIZE = 4096;
+   public static final boolean DEBUG = true;
+   private final ProxyWebSocketHandler proxyWebSocketHandler;
     private final WebSocketProxyHandler webSocketProxyHandler;
 
     public WebSocketConfig(ProxyWebSocketHandler proxyWebSocketHandler, WebSocketProxyHandler webSocketProxyHandler) {
@@ -24,6 +25,8 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
         // Увеличиваем размер сообщений, если это необходимо
         registry.setMessageSizeLimit(10 * 1024 * 1024); // Максимальный размер сообщения
         registry.setSendBufferSizeLimit(10 * 1024 * 1024); // Максимальный размер буфера отправки
+      //  registry.setSendTimeLimit(60 * 1000); // Таймаут отправки
+    //    registry.setSupportsPartialMessages(true); // Включаем поддержку фрагментированных сообщений
     }
 
 
@@ -54,7 +57,7 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
 
 //package com.example.websocketproxy.config;
 //
-//import com.example.websocketproxy.WebSocketProxyHandler;
+//import com.example.websocketproxy.websocket.WebSocketProxyHandler;
 //import org.springframework.context.annotation.Bean;
 //import org.springframework.context.annotation.Configuration;
 //import org.springframework.web.client.RestTemplate;

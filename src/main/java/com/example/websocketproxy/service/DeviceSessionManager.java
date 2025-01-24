@@ -1,5 +1,6 @@
 package com.example.websocketproxy.service;
 
+import com.example.websocketproxy.config.WebSocketConfig;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -30,7 +31,24 @@ public class DeviceSessionManager {
         return deviceSessions;
     }
 
+    //private final Map<String,WebSocketSession> sessionToRequestId = new ConcurrentHashMap<>();
 
+
+//    public void addRequestIdSession(WebSocketSession session, String requestId) {
+//        sessionToRequestId.put(session, requestId);
+//    }
+//
+//    public String getRequestIdSession(WebSocketSession session) {
+//        return sessionToRequestId.get(session);
+//    }
+//
+//    public boolean isFirstForRequestId(WebSocketSession session){
+//        return !sessionToRequestId.containsKey(session);
+//    }
+//
+//    public void removeRequestIdSession(String requestId) {
+//        sessionToRequestId.remove(requestId);
+//    }
 
 
 }

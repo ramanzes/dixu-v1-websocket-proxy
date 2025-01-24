@@ -1,6 +1,7 @@
 package com.example.websocketproxy.controller;
 
-import com.example.websocketproxy.WebSocketProxyHandler;
+import com.example.websocketproxy.service.RequestData;
+import com.example.websocketproxy.websocket.WebSocketProxyHandler;
 import com.example.websocketproxy.service.DeviceSessionManager;
 import com.example.websocketproxy.service.MyLogger;
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,10 +12,11 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.BufferedReader;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Enumeration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 @Controller
@@ -28,24 +30,51 @@ public class ProxyController {
         this.webSocketProxyHandler = webSocketProxyHandler;
     }
 
+    private final Object sendLock = new Object(); // Объект для синхронизации
+//можно попробовать и без синхронизации, это было сделоно то того как у каждого запроса был уникальный идентификатор
+    public void sendMessage(WebSocketSession session, TextMessage message) throws IOException, IOException {
+        synchronized (sendLock) {
+            session.sendMessage(message);
+        }
+    }
+
+
+
+
     @RequestMapping(value = "/p/{deviceId}/**", method = {RequestMethod.GET, RequestMethod.POST})
-    public ResponseEntity<String> proxyRequest(@PathVariable String deviceId,
+    public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
                                                HttpServletRequest request) {
         WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
 
+        CompletableFuture<String> textResponseFuture = new CompletableFuture<>();
+        CompletableFuture<byte[]> binaryResponseFuture = new CompletableFuture<>();
+        CompletableFuture<Object> combinedFuture = new CompletableFuture<>();
+
+
         if (deviceSession == null || !deviceSession.isOpen()) {
-            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected");
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
         }
 
         try {
-            // Сборка HTTP-запроса
+            // Генерация уникального requestId для каждого запроса пользователя
+            String requestId = RequestData.generateRequestId(deviceId);
+            //строка запроса
+            String requestPath = RequestData.getPathFromRequest(request,deviceId);
+            //получаем тип контента из пути запроса
+            String contentType = RequestData.getContentType(requestPath);
+            //связываем тип контента с id этого запроса
+            RequestData.addContentTypeForRequestId(requestId,contentType);
+
+            // Сборка HTTP-запроса с добавлением requestId
             StringBuilder requestBuilder = new StringBuilder();
             requestBuilder.append(request.getMethod()).append(" ").append(request.getRequestURI().replace("/p/" + deviceId, "")).append(" HTTP/1.1\n");
+            requestBuilder.append("X-Request-Id: ").append(requestId).append("\n"); // Добавляем requestId в заголовки
             Enumeration<String> headerNames = request.getHeaderNames();
             while (headerNames.hasMoreElements()) {
                 String headerName = headerNames.nextElement();
                 String headerValue = request.getHeader(headerName);
                 requestBuilder.append(headerName).append(": ").append(headerValue).append("\n");
+                MyLogger.logServer(headerName,true);
             }
             requestBuilder.append("\n");
 
@@ -57,29 +86,86 @@ public class ProxyController {
             String httpRequest = requestBuilder.toString();
 
             // Отправляем запрос устройству через WebSocket
-            deviceSession.sendMessage(new TextMessage(httpRequest+"это из приложения!!!"));
-           // System.out.println("ждём ответ от устройства на запрос"+httpRequest+ "_____________________________________");
+            sendMessage(deviceSession, new TextMessage(httpRequest));
+
             // Ждем ответ от устройства
-            CompletableFuture<String> responseFuture = webSocketProxyHandler.waitForResponse(deviceId);
-            String deviceResponse = new String();
-            try {
-                MyLogger.processMessage("Waiting for response from device", deviceId);
-                deviceResponse = responseFuture.get(60, TimeUnit.SECONDS);
-                MyLogger.processMessage("Response received","");
-            } catch (TimeoutException e) {
-                MyLogger.processMessageErr("Timeout while waiting for response from device", deviceId, e);
+            // здесь уже нужно понимать какой у нас запрос на текстовые или бинарные данные
+            //чтобы не ждать того чего нет по этому запросу. а так мы ждём и то и то сейчас.
 
+            if (RequestData.isHtmlPageRequest(requestPath))
+                textResponseFuture = webSocketProxyHandler.waitForResponse(requestId);
+            else
+                binaryResponseFuture = webSocketProxyHandler.waitForBinaryResponse(requestId);
+
+            // Ожидаем либо текстовый, либо бинарный ответ
+            combinedFuture = CompletableFuture.anyOf(textResponseFuture, binaryResponseFuture);
+
+            //Ожидает завершения CompletableFuture с помощью combinedFuture.get(). т.е. когда будет получено всё сообщение отправленное по частям сможем продолжить
+            Object response = combinedFuture.get(120, TimeUnit.SECONDS); // Увеличиваем таймаут
+
+            if (RequestData.isHtmlPageRequest(requestPath)&&!(response instanceof String)){
+//                MyLogger.logServer("ожидали получить текстовый ответ, а получили бинарный");
+                throw new MyLogger.CustomException("ожидали получить текстовый ответ, а получили бинарный","несоответствие ожиданий");
+            } else if (!RequestData.isHtmlPageRequest(requestPath)&&!(response instanceof byte[])){
+//                MyLogger.logServer("ожидали получить бинарный ответ, а получили текстовый");
+                throw new MyLogger.CustomException("ожидали получить бинарный ответ, а получили текстовый","несоответствие ожиданий");
             }
-      //      String deviceResponse = responseFuture.get(30, TimeUnit.SECONDS); // Таймаут ожидания
 
-            // Возвращаем ответ клиента
-            System.out.println("возвращаем ответ от клиента");
-            return ResponseEntity.ok(deviceResponse);
+            if (response instanceof String) {
+                // Текстовый ответ
+                MyLogger.logServer("возвращаем текстовый ответ от клиента",true);
+
+                String fullResponse = (String) response;
+
+                // Разделяем заголовки и тело
+                String[] parts = fullResponse.split("\r\n\r\n", 2); // \r\n\r\n — разделитель между заголовками и телом
+
+                String body;
+                if (parts.length == 2) {
+                    String headers = parts[0]; // Заголовки
+                    body = parts[1];           // Тело
+                    MyLogger.logServer("Заголовки:\n" + headers, true);
+                } else {
+                    body = fullResponse; // Если разделителя нет, вся строка считается телом
+                }
+
+                // Возвращаем только тело ответа
+                return ResponseEntity.ok(body.getBytes(StandardCharsets.UTF_8));
+
+            } else if (response instanceof byte[]) {
+                try {
+                    MyLogger.logServer("Возвращаем бинарный ответ от клиента, contentType: " + contentType,true);
+
+                    MediaType mediaType;
+                    try {
+                        mediaType = MediaType.valueOf(contentType);
+                    } catch (InvalidMediaTypeException e) {
+//                        MyLogger.logServer("Ошибка в contentType: " + contentType);
+                        throw new IllegalArgumentException("Некорректный contentType: " + contentType, e);
+                    }
+
+                    return ResponseEntity.ok()
+                            .contentType(mediaType)
+                            .body((byte[]) response);
+                } catch (Exception e) {
+                    MyLogger.logServer("Ошибка при формировании ответа: " + e.getMessage());
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error while processing binary response".getBytes(StandardCharsets.UTF_8));
+                }
+            }
+
+
+
+            else {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Unexpected response type".getBytes(StandardCharsets.UTF_8));
+            }
         } catch (Exception e) {
             e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error occurred: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(("Error occurred: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
         }
     }
+
+
+
 }
 
 
@@ -89,243 +175,3 @@ public class ProxyController {
 
 
 
-
-
-
-//
-//
-//
-//
-//
-//
-//
-//package com.example.websocketproxy.controller;
-//
-//import com.example.websocketproxy.WebSocketProxyHandler;
-//import com.example.websocketproxy.service.DeviceSessionManager;
-//import com.example.websocketproxy.websocket.ProxyWebSocketHandler;
-//import jakarta.servlet.http.HttpServletRequest;
-//import org.springframework.beans.factory.annotation.Autowired;
-//import org.springframework.http.*;
-//import org.springframework.stereotype.Controller;
-//import org.springframework.web.bind.annotation.*;
-//import org.springframework.web.client.RestTemplate;
-//import org.springframework.web.socket.TextMessage;
-//import org.springframework.web.socket.WebSocketSession;
-//
-//
-//import org.springframework.http.ResponseEntity;
-//import org.springframework.stereotype.Controller;
-//import org.springframework.web.bind.annotation.*;
-//
-//import java.util.Enumeration;
-//import java.util.concurrent.CompletableFuture;
-//import java.util.concurrent.TimeUnit;
-//import java.util.stream.Collectors;
-//
-//
-//@Controller
-//public class ProxyController {
-//
-//    private final DeviceSessionManager deviceSessionManager;
-//
-//    public ProxyController(DeviceSessionManager deviceSessionManager) {
-//        this.deviceSessionManager = deviceSessionManager;
-//    }
-//
-//    @RequestMapping(value = "/proxy/{deviceId}/**", method = {RequestMethod.GET, RequestMethod.POST})
-//    public ResponseEntity<String> proxyRequest(@PathVariable String deviceId,
-//                                               HttpServletRequest request) {
-//        // Находим WebSocket-соединение с устройством
-//        WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
-//
-//        if (deviceSession == null || !deviceSession.isOpen()) {
-//            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected");
-//        }
-//
-//        try {
-//            // Читаем HTTP-запрос от клиента
-//            StringBuilder requestBuilder = new StringBuilder();
-//            requestBuilder.append(request.getMethod()).append(" ").append(request.getRequestURI()).append(" HTTP/1.1\n");
-//            Enumeration<String> headerNames = request.getHeaderNames();
-//            while (headerNames.hasMoreElements()) {
-//                String headerName = headerNames.nextElement();
-//                String headerValue = request.getHeader(headerName);
-//                requestBuilder.append(headerName).append(": ").append(headerValue).append("\n");
-//            }
-//            requestBuilder.append("\n");
-//
-//            // Если POST-запрос, добавляем тело
-//            if ("POST".equalsIgnoreCase(request.getMethod())) {
-//                String body = request.getReader().lines().collect(Collectors.joining(System.lineSeparator()));
-//                requestBuilder.append(body);
-//            }
-//
-//            // Отправляем HTTP-запрос устройству через WebSocket
-//            String httpRequest = requestBuilder.toString();
-//            deviceSession.sendMessage(new TextMessage(httpRequest));
-//
-//            // Ждем ответа от устройства
-//            CompletableFuture<String> responseFuture = webSocketProxyHandler.waitForResponse(deviceId);
-//            String deviceResponse = responseFuture.get(30, TimeUnit.SECONDS); // Таймаут ожидания ответа
-//
-//            // Возвращаем ответ клиента
-//            return ResponseEntity.ok(deviceResponse);
-//        } catch (Exception e) {
-//            e.printStackTrace();
-//            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error occurred: " + e.getMessage());
-//        }
-//    }
-//}
-
-
-//@Controller
-//public class ProxyController {
-//    // private final WebSocketProxyHandler webSocketProxyHandler;
-//
-//    //    public ProxyController(WebSocketProxyHandler webSocketProxyHandler) {
-////        this.webSocketProxyHandler = webSocketProxyHandler;
-////    }
-//    private final DeviceSessionManager deviceSessionManager;
-//    public ProxyController(DeviceSessionManager deviceSessionManager) {
-//        this.deviceSessionManager = deviceSessionManager;
-//    }
-//
-//    @Autowired
-//    private RestTemplate restTemplate;
-//    @RequestMapping(value = "/proxy/{deviceId}/**", method = {RequestMethod.GET, RequestMethod.POST})
-//    public ResponseEntity<String> proxyRequest(@PathVariable String deviceId,
-//                                               HttpServletRequest request) throws Exception {
-//        String deviceIp = "localhost"; // Замените на IP устройства
-//        //String targetUrl = "http://" + deviceIp+":8080";
-//        String targetUrl = "http://" + deviceIp + ":80" + request.getRequestURI();
-//
-//        // Формирование запроса
-//        HttpHeaders headers = new HttpHeaders();
-//        request.getHeaderNames().asIterator().forEachRemaining(headerName -> {
-//            headers.add(headerName, request.getHeader(headerName));
-//        });
-//
-//        HttpEntity<String> entity = new HttpEntity<>(null, headers);
-//
-//        // Отправка запроса устройству
-//        ResponseEntity<String> response = restTemplate.exchange(targetUrl, HttpMethod.valueOf(request.getMethod()), entity, String.class);
-//
-//        // Возврат ответа клиенту
-//        return ResponseEntity.status(response.getStatusCode())
-//                .headers(response.getHeaders())
-//                .body(response.getBody());
-//    }
-//}
-//
-//
-
-
-
-
-
-//@Controller
-//public class ProxyController {
-//   // private final WebSocketProxyHandler webSocketProxyHandler;
-//
-////    public ProxyController(WebSocketProxyHandler webSocketProxyHandler) {
-////        this.webSocketProxyHandler = webSocketProxyHandler;
-////    }
-//    private final DeviceSessionManager deviceSessionManager;
-//    public ProxyController(DeviceSessionManager deviceSessionManager) {
-//        this.deviceSessionManager = deviceSessionManager;
-//    }
-//    @RequestMapping(value = "/proxy/{deviceId}/**", method = {RequestMethod.GET, RequestMethod.POST})
-//    public ResponseEntity<String> proxyRequest(@PathVariable String deviceId,
-//                                               @RequestParam(required = false) String path,
-//                                               @RequestBody(required = false) String body,
-//                                               HttpMethod method) throws Exception {
-////        WebSocketSession deviceSession = webSocketProxyHandler.getSession(deviceId);
-//        WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
-//
-//        //   System.out.println("ProxyController.proxyRequest "+deviceId+" "+deviceSession.getUri());
-//        if (deviceSession == null || !deviceSession.isOpen()) {
-//            return ResponseEntity.status(404).body("Device not connected");
-//        }
-//
-//        // Отправляем запрос устройству через WebSocket
-//        String request = method + " " + (path == null ? "/" : path) + "\n" + body;
-//        deviceSession.sendMessage(new TextMessage(request));
-//
-////        // Получаем ответ от устройства
-////        String response = webSocketProxyHandler.getResponseForRequest(deviceId);
-////
-////        return ResponseEntity.ok(response);
-//
-//
-//        // Здесь можно добавить обработку ответа, если нужно
-//        return ResponseEntity.ok("Request sent to device: " + deviceId);
-//    }
-//}
-
-
-//
-//@RestController
-//public class ProxyController {
-//    @Autowired
-//    private ProxyWebSocketHandler proxyWebSocketHandler;
-//
-//    @GetMapping("/proxy/{deviceId}/**")
-//    public ResponseEntity<String> proxyToDevice(@PathVariable String deviceId, HttpServletRequest request) {
-//        WebSocketSession deviceSession = proxyWebSocketHandler.getDeviceSessions(deviceId);
-//
-//        if (deviceSession == null || !deviceSession.isOpen()) {
-//            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Device not connected");
-//        }
-//
-//        try {
-//            String path = request.getRequestURI().split("/proxy/" + deviceId)[1];
-//            String httpRequest = "GET " + path + " HTTP/1.1";
-//
-//            deviceSession.sendMessage(new TextMessage(httpRequest));
-//
-//            // Здесь ожидается ответ от устройства
-//            // Для упрощения возвращаем заглушку
-//            return ResponseEntity.ok("Proxied response from device");
-//        } catch (Exception e) {
-//            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error proxying request");
-//        }
-//    }
-//}
-
-
-
-//@Controller
-//@RequestMapping("/proxy")
-//public class ProxyController {
-//
-//    private final ProxyWebSocketHandler webSocketHandler;
-//
-//    public ProxyController(ProxyWebSocketHandler webSocketHandler) {
-//        this.webSocketHandler = webSocketHandler;
-//    }
-//
-//    @GetMapping("/{deviceId}/**")
-//    public ResponseEntity<String> proxyRequest(@PathVariable String deviceId,
-//                                               @RequestParam String path,
-//                                               @RequestBody(required = false) String body) {
-//        try {
-//            WebSocketSession session = webSocketHandler.getDeviceSession(deviceId);
-//            if (session == null || !session.isOpen()) {
-//                return ResponseEntity.status(404).body("Device not connected");
-//            }
-//
-//            // Формируем HTTP-запрос в формате JSON
-//            String request = String.format("{\"path\":\"%s\",\"body\":\"%s\"}", path, body);
-//
-//            // Отправляем запрос на устройство через WebSocket
-//            session.sendMessage(new TextMessage(request));
-//
-//            // В ответе мы можем ожидать асинхронный ответ от устройства
-//            // или возвращать сразу статус, что запрос принят
-//            return ResponseEntity.ok("Request sent to device");
-//        } catch (Exception e) {
-//            return ResponseEntity.status(500).body("Error: " + e.getMessage());
-//        }
-//    }
-//}
