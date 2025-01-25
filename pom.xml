@@ -124,6 +124,7 @@
 				<configuration>
 					<archive>
 						<manifest>
+							<addClasspath>true</addClasspath>
 							<mainClass>com.example.websocketproxy.WebSocketProxyApplication</mainClass> <!-- Замените на ваш основной класс -->
 						</manifest>
 					</archive>
