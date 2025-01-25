@@ -65,18 +65,42 @@ public class ProxyController {
             //связываем тип контента с id этого запроса
             RequestData.addContentTypeForRequestId(requestId,contentType);
 
+//            // Сборка HTTP-запроса с добавлением requestId
+//            StringBuilder requestBuilder = new StringBuilder();
+//            requestBuilder.append(request.getMethod()).append(" ").append(request.getRequestURI().replace("/p/" + deviceId, "")).append(" HTTP/1.1\n");
+//            requestBuilder.append("X-Request-Id: ").append(requestId).append("\n"); // Добавляем requestId в заголовки
+//            Enumeration<String> headerNames = request.getHeaderNames();
+//            while (headerNames.hasMoreElements()) {
+//                String headerName = headerNames.nextElement();
+//                String headerValue = request.getHeader(headerName);
+//                requestBuilder.append(headerName).append(": ").append(headerValue).append("\n");
+//                MyLogger.logServer(headerName,true);
+//            }
+//            requestBuilder.append("\n");
+
             // Сборка HTTP-запроса с добавлением requestId
             StringBuilder requestBuilder = new StringBuilder();
-            requestBuilder.append(request.getMethod()).append(" ").append(request.getRequestURI().replace("/p/" + deviceId, "")).append(" HTTP/1.1\n");
-            requestBuilder.append("X-Request-Id: ").append(requestId).append("\n"); // Добавляем requestId в заголовки
+            requestBuilder.append(request.getMethod()).append(" ");
+
+            // Добавляем путь и query parameters (если есть)
+            String queryString = request.getQueryString(); // Получаем query parameters
+            String fullPath = requestPath + (queryString != null ? "?" + queryString : "");
+            requestBuilder.append(fullPath).append(" HTTP/1.1\n");
+
+            // Добавляем requestId в заголовки
+            requestBuilder.append("X-Request-Id: ").append(requestId).append("\n");
+
+            // Добавляем остальные заголовки
             Enumeration<String> headerNames = request.getHeaderNames();
             while (headerNames.hasMoreElements()) {
                 String headerName = headerNames.nextElement();
                 String headerValue = request.getHeader(headerName);
                 requestBuilder.append(headerName).append(": ").append(headerValue).append("\n");
-                MyLogger.logServer(headerName,true);
+                MyLogger.logServer(headerName, true);
             }
             requestBuilder.append("\n");
+
+
 
             if ("POST".equalsIgnoreCase(request.getMethod())) {
                 String body = new BufferedReader(request.getReader()).lines().collect(Collectors.joining("\n"));
