@@ -1,8 +1,8 @@
 package com.example.websocketproxy.websocket;
 
-import com.example.websocketproxy.service.DeviceSessionManager;
-import com.example.websocketproxy.service.MyLogger;
-import com.example.websocketproxy.service.RequestData;
+import com.example.websocketproxy.services.DeviceSessionManager;
+import com.example.websocketproxy.services.logsandexceptions.MyLogger;
+import com.example.websocketproxy.services.logsandexceptions.exceptions.DeviceWithThisIdIsInActiveSessionNow;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import org.springframework.stereotype.Component;
@@ -34,20 +34,49 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
     private final Map<String, StringBuilder> textMessageBuffers = new ConcurrentHashMap<>(); // Буфер для фрагментированных сообщений
     private final Map<String, ByteArrayOutputStream> byteMessageBuffers = new ConcurrentHashMap<>();
 
+    private final Map<String, ByteArrayOutputStream> headersThisResponse = new ConcurrentHashMap<>();
+
   //  private final Map<String, String> lastContentTypes = new ConcurrentHashMap<>();
 
     public WebSocketProxyHandler(DeviceSessionManager deviceSessionManager) {
         this.deviceSessionManager = deviceSessionManager;
     }
 
+
+    // здесь мы общаемся с устройствами через вебсокет напрямую, ещё до первых запросов с контроллера
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        String deviceId = getDeviceIdFromSession(session);
+        MyLogger.logServer("session.id = ["+session.getId()+"]");
+        String deviceId = deviceSessionManager.getDeviceIdFromSession(session);
         if (deviceId == null) {
             session.close(CloseStatus.BAD_DATA);
             MyLogger.logServer("Connection rejected: missing or invalid deviceId");
             return;
         }
+
+        // Проверка существующего подключения
+        if (deviceSessionManager.isDeviceConnected(deviceId)) {
+            // Закрываем соединение с специальным статусом
+            CloseStatus closeStatus = new CloseStatus(
+                    4000,
+                    "Device " + deviceId + " already connected"
+            );
+
+            // Отправка специального сообщения перед закрытием
+            try {
+                session.sendMessage(new TextMessage(
+                        "CONNECTION_REJECTED: Device already connected "+" Устройство с таким же ID уже зарегистрировано на прокси сервере. Обратитесь в райсполком, где вам выдавали ID для вашего устройства"
+                ));
+            } catch (IOException e) {
+                MyLogger.logServer("Error sending rejection message: " + e.getMessage());
+            }
+
+            session.close(closeStatus);
+            throw new DeviceWithThisIdIsInActiveSessionNow();
+        }
+
+
+
 
         deviceSessionManager.addSession(deviceId, session);
         textMessageBuffers.put(deviceId, new StringBuilder()); // Инициализация буфера для устройства
@@ -56,27 +85,45 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
     }
 
 
-//Извлечение requestId из ответов
-    private String extractRequestId(String message) {
-
+    private String getHeaders(String message) {
         int headerEndIndex = message.indexOf("\r\n\r\n");
         if (headerEndIndex == -1) {
             MyLogger.logServer("No headers found in the response");
             return "";
         }
+        String headers = message.substring(0,headerEndIndex);
+        MyLogger.logServer(headers,true);
+        return headers;
+    }
+////Извлечение requestId из ответов
+//    private String extractRequestId(String message) {
+//
+//        String headers = getHeaders(message);
+//
+//        for (String line : headers.split("\r\n")) {
+//            if (line.startsWith("X-Request-Id:")) {
+//                return line.substring("X-Request-Id:".length()).trim();
+//            }
+//        }
+//        return null;
+//    }
 
-        String headers = message.substring(0, headerEndIndex);
+    //Извлечение куков из ответов
+    private List<String> extractCookies(String message) {
+        List<String> cookies = new ArrayList<>();
+        String headers = getHeaders(message);
 
         for (String line : headers.split("\r\n")) {
-            if (line.startsWith("X-Request-Id:")) {
-                return line.substring("X-Request-Id:".length()).trim();
+            if (line.startsWith("Set-Cookie:")) {
+                // Извлекаем куку и добавляем в список
+                String cookie = line.substring("Set-Cookie:".length()).trim();
+                cookies.add(cookie);
             }
         }
-        return null;
+        return cookies;
     }
 
-
-
+// когда сообщения по вебсокету приходят от устройства мы попадаем сюда
     @Override
     public void handleTextMessage(WebSocketSession session, TextMessage message) {
 
@@ -88,13 +135,15 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
             JsonObject json = new Gson().fromJson(payload, JsonObject.class);
 
             String requestId = json.get("requestId").getAsString();
+            //пока не передаём в клиенте в  json этот параметр
+//            String cookies = json.get("cookies").getAsString();
 
             String data = json.get("data").getAsString();
 
             String isLast = json.get("isLast").getAsString();
 
 
-            // Обработка данных
+            // Обработка данных получаем все части в буфер(в мапу), с ключом для каждого id запроса
             StringBuilder buffer = textMessageBuffers.computeIfAbsent(requestId, k -> new StringBuilder());
             buffer.append(data);
 
@@ -103,7 +152,8 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
                 buffer.setLength(0); // Очищаем буфер
                 textMessageBuffers.remove(requestId); // Удаляем буфер для requestId
 
-                MyLogger.logServer(fullMessage);
+//                MyLogger.logServer(fullMessage,true);
+
 //                // Если сообщение слишком большое, возможно, нужно добавить дополнительную обработку
 //                if (fullMessage.length() > MAX_MESSAGE_SIZE) {
 //                    MyLogger.logServer("Сообщение для requestId: " + requestId + " слишком большое, обрабатываем по частям.");
@@ -111,9 +161,30 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
 //                }
 //
                 if (fullMessage.startsWith("HTTP/1.1")) {
+//                    handleResponse(requestId, fullMessage, cookies);
+                    // Извлекаем заголовки для логирования
+                    String headers = "";
+                    int index = fullMessage.indexOf("\r\n\r\n");
+                    if (index != -1) {
+                        headers = fullMessage.substring(0, index);
+
+                    String[] header = headers.split("\r\n");
+                    for (String h : header) {
+                        if (h.contains(":")) {
+                            String[] keyValue = h.split(":", 2);
+                            MyLogger.logServer("!!!заголовки на отправку на прокси["+keyValue[0].trim()+"]"+"["+keyValue[1].trim()+"]",true);
+                        }
+                    }
+                    } else {
+                        MyLogger.logServer("заголовки на отправку на прокси!!! неверный формат",true);
+                    }
+
+                    MyLogger.logServer("длина полного сообщения ["+requestId+"] "+fullMessage.length());
+                    MyLogger.logServer("длина заголовков этого сообщения ["+requestId+"] "+headers.length());
+
                     handleResponse(requestId, fullMessage);
                 } else {
-                    MyLogger.logServer("Full message for requestId: " + requestId);
+                    MyLogger.logServer("[нет вначале HTTP/1.1] Full message for requestId: " + requestId,true);
                 }
             }
         } catch (Exception e) {
@@ -131,12 +202,12 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
 
     @Override
     public void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
-        String deviceId = getDeviceIdFromSession(session);
+        String deviceId = deviceSessionManager.getDeviceIdFromSession(session);
         if (deviceId == null) {
-            MyLogger.logServer("Received message from unidentified session");
+            MyLogger.logServer("Received message from unidentified session",true);
             return;
         }
-        MyLogger.logServer("Начинаем приём бинарных сообщений от устройства [" + deviceId + "]");
+        MyLogger.logServer("Начинаем приём бинарных сообщений от устройства [" + deviceId + "]",true);
 
         ByteBuffer payload = message.getPayload();
         payload.rewind();
@@ -150,7 +221,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
             payload.get(requestIdBytes);
             String requestId = new String(requestIdBytes, StandardCharsets.UTF_8);
 
-            MyLogger.logServer(requestId);
+            MyLogger.logServer(requestId,true);
             // Остальные данные
             byte[] data = new byte[payload.remaining()];
             payload.get(data);
@@ -158,7 +229,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
 
 
 
-            // Сохраняем фрагменты в буфер
+            // Сохраняем фрагменты в буфер для каждого requestId
             ByteArrayOutputStream buffer = byteMessageBuffers.computeIfAbsent(requestId, k -> new ByteArrayOutputStream());
             buffer.write(data);
 
@@ -168,19 +239,22 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
 //                buffer.reset(); // Очищаем буфер
                 byteMessageBuffers.remove(requestId); // Удаляем буфер для requestId
 
-                // Определяем contentType (если доступен)
-                String contentType = RequestData.getContentTypeFromRequestId(requestId);
-                if (contentType == null) {
-                    handleBinaryResponse(requestId, fullMessageBytes, "application/octet-stream");
-                } else {
-//                    MyLogger.logServer("Получены данные для запроса [" + requestId + "]: " + Base64.getEncoder().encodeToString(fullMessageBytes));
-                    // Вычисление хэша отправляемых данных
-                    String dataHash = calculateHash(fullMessageBytes);
-                    MyLogger.logServer("Хэш данных для запроса [" + requestId + "]: " + dataHash);
+//                // Определяем contentType (если доступен)
+//                String contentType = RequestData.getContentTypeFromRequestId(requestId);
+//                if (contentType == null) {
+//                    handleBinaryResponse(requestId, fullMessageBytes, "application/octet-stream");
+//
+//                } else {
+////                    MyLogger.logServer("Получены данные для запроса [" + requestId + "]: " + Base64.getEncoder().encodeToString(fullMessageBytes));
+//                    // Вычисление хэша отправляемых данных
+//                    String dataHash = calculateHash(fullMessageBytes);
+//                    MyLogger.logServer("Хэш данных для запроса [" + requestId + "]: " + dataHash,true);
+//
+//                    handleBinaryResponse(requestId, fullMessageBytes, contentType);
+//                    RequestData.removeContentTypeRequestId(requestId);
+//                }
 
-                    handleBinaryResponse(requestId, fullMessageBytes, contentType);
-                    RequestData.removeContentTypeRequestId(requestId);
-                }
+                    handleBinaryResponse(requestId, fullMessageBytes);
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -231,7 +305,14 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
 
-        String deviceId = getDeviceIdFromSession(session);
+        String deviceId = deviceSessionManager.getDeviceIdFromSession(session);
+
+        //если это выход при существующем устройстве с таким же id то никаких объектов не создавалось в этой сессии поэтому тут делать нечего, просто выходим чтобы не ломать действующего подключения с таким же id устройства
+        if (status.getCode()==4000) {
+            MyLogger.logServer("deviseId ["+deviceId+"] неудачная попытка соединения с таким же id устройства");
+            return;
+        }
+
 
         // Завершаем все CompletableFuture для этого устройства
         CompletableFuture<String> textFuture;// = responseFutures.remove();
@@ -246,7 +327,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
                     textFuture = responseFutures.remove(key);
                     if (textFuture != null && !textFuture.isDone()) {
                         textFuture.completeExceptionally(new IOException("Connection closed"));
-                        MyLogger.logServer("Completed text future for device " + deviceId + " due to connection close");
+                        MyLogger.logServer("Completed text future for device " + deviceId + " due to connection close",true);
                         break;
                     }
                 }
@@ -255,7 +336,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
                     binaryFuture = binaryResponseFutures.remove(key);
                     if (binaryFuture != null && !binaryFuture.isDone()) {
                         binaryFuture.completeExceptionally(new IOException("Connection closed"));
-                        MyLogger.logServer("Completed binary future for device " + deviceId + " due to connection close");
+                        MyLogger.logServer("Completed binary future for device " + deviceId + " due to connection close",true);
                         break;
                     }
                 }
@@ -268,14 +349,14 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
 
     public CompletableFuture<String> waitForResponse(String requestId) {
         CompletableFuture<String> future = new CompletableFuture<>();
-        MyLogger.logServer("ждём текстовые данные для устройства requestId: " + requestId);
+        MyLogger.logServer("ждём текстовые данные для устройства requestId: " + requestId,true);
         responseFutures.put(requestId, future);
         return future;
     }
 
     public CompletableFuture<byte[]> waitForBinaryResponse(String requestId) {
         CompletableFuture<byte[]> future = new CompletableFuture<>();
-        MyLogger.logServer("ждём бинарные данные для устройства requestId: " + requestId);
+        MyLogger.logServer("ждём бинарные данные для устройства requestId: " + requestId,true);
         binaryResponseFutures.put(requestId, future);
         return future;
     }
@@ -294,6 +375,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
         CompletableFuture<String> future = responseFutures.remove(requestId);
         if (future != null) {
             MyLogger.logServer("Handling response for device requestId: " + requestId);
+    //        таким образом мы ассинхронно возвращаемся в точку вызова в класс ProxyController webSocketProxyHandler.waitForResponse(requestId);
             future.complete(response);
         } else {
             MyLogger.logServer("Unexpected response from device, requestId: " + requestId);
@@ -303,8 +385,28 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
 
 
 
-    // при получении полного бинарного ответа выполнение  future.complete(response);
-    private void handleBinaryResponse(String requestId, byte[] data, String contentType) {
+//    // при получении полного бинарного ответа выполнение  future.complete(response);
+//    private void handleBinaryResponse(String requestId, byte[] data, String contentType) {
+//
+//        if (requestId == null) {
+//            MyLogger.logServer("No requestId found in the binary response");
+//            return;
+//        }
+//
+//        // Ищем CompletableFuture по requestId
+//        CompletableFuture<byte[]> future = binaryResponseFutures.remove(requestId);
+//        if (future != null) {
+//            MyLogger.logServer("Handling binary response for device, requestId: " + requestId);
+//
+//            //правильные заголовки в этой data есть? сейчас
+//            future.complete(data);
+//        } else {
+//            MyLogger.logServer("Unexpected binary response from device, requestId: " + requestId);
+//        }
+//    }
+
+    //не вижу необходимости в обработке contentType, пока убрал
+    private void handleBinaryResponse(String requestId, byte[] data) {
 
         if (requestId == null) {
             MyLogger.logServer("No requestId found in the binary response");
@@ -323,17 +425,18 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
         }
     }
 
-    private String getDeviceIdFromSession(WebSocketSession session) {
-        try {
-            String query = session.getUri().getQuery();
-            if (query != null && query.contains("deviceId=")) {
-                return query.split("deviceId=")[1];
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return null;
-    }
+
+//    private String getDeviceIdFromSession(WebSocketSession session) {
+//        try {
+//            String query = session.getUri().getQuery();
+//            if (query != null && query.contains("deviceId=")) {
+//                return query.split("deviceId=")[1];
+//            }
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//        }
+//        return null;
+//    }
 
 }
 

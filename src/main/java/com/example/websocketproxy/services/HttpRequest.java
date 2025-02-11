@@ -1,21 +1,37 @@
-package com.example.websocketproxy.service;
+package com.example.websocketproxy.services;
 
 import java.util.Map;
 import java.util.UUID;
 
+import com.example.websocketproxy.services.logsandexceptions.MyLogger;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.servlet.HandlerMapping;
 
-import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.concurrent.ConcurrentHashMap;
+import jakarta.servlet.http.Cookie;
+
+
+
 
 //класс получения доступной информации по пути запроса
-public class RequestData {
+public class HttpRequest {
+//метод для извлечения кук:
+    public static Map<String, String> extractCookies(HttpServletRequest request) {
+        Cookie[] cookies = request.getCookies();
+        Map<String, String> cookieMap = new ConcurrentHashMap<>();
+        if (cookies != null) {
+            for (Cookie cookie : cookies) {
+                cookieMap.put(cookie.getName(), cookie.getValue());
+            }
+        }
+        return cookieMap;
+    }
+
+//  ???  вопрос нужно ли здесь обрезать путь, чтобы на клиенте снова его воссоздавать?
+    //возможно нужно ведь на клиенте мы запрашиваем без id устройства а внутренние пути преобразуются уже с id под автозапросы от прокси при загрузки html. это файлы стилей изображений и все внутренние ссылки, они также должны быть с id устройстов чтобы подгружались сами
     public static String getPathFromRequest(HttpServletRequest request, String deviceId) {
         // Получаем оставшуюся часть пути
-        String remainingPath = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
+//        String remainingPath = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
         String fullPath = request.getRequestURI();
 
         // Удаляем часть пути, соответствующую deviceId
@@ -172,37 +188,66 @@ public class RequestData {
 
     }
 
-    public static String getContentTypeFromBinaryResponse(ByteArrayOutputStream buffer) throws Exception {
-        byte[] fullMessageBytes = buffer.toByteArray();
-        buffer.reset(); // Очищаем буфер
+//заменить на этот метод
+//
+//    private static final Map<String, String> MIME_TYPES = Map.of(
+//            ".html", "text/html",
+//            ".css", "text/css",
+//            ".js", "application/javascript",
+//            ".png", "image/png",
+//            ".jpg", "image/jpeg",
+//            ".woff", "font/woff"
+//            // Add more mappings
+//    );
+//
+//    public static String getContentType(String resourcePath) {
+//        return MIME_TYPES.entrySet()
+//                .stream()
+//                .filter(entry -> resourcePath.endsWith(entry.getKey()))
+//                .map(Map.Entry::getValue)
+//                .findFirst()
+//                .orElse("application/octet-stream");
+//    }
+//
 
-        // Преобразуем байты в строку для заголовков
-        String fullMessage = new String(fullMessageBytes, StandardCharsets.UTF_8);
-
-        // Разделяем заголовки и данные
-        int headerEndIndex = fullMessage.indexOf("\r\n\r\n");
-        if (headerEndIndex == -1) return "application/octet-stream";;
-        String headers = fullMessage.substring(0, headerEndIndex);
-        byte[] data = Arrays.copyOfRange(fullMessageBytes, headerEndIndex + 4, fullMessageBytes.length);
-
-        // Извлекаем Content-Type из заголовков
-        String contentType = extractContentType(headers);
-        return contentType;
-    }
 
 
-    /**
-     * Извлекает Content-Type из заголовков.
-     */
-    private static String extractContentType(String headers) {
-        for (String line : headers.split("\r\n")) {
-            if (line.startsWith("Content-Type:")) {
-                return line.substring("Content-Type:".length()).trim();
-            }
-        }
-        return "application/octet-stream"; // По умолчанию
-    }
 
+
+
+
+
+//    public static String getContentTypeFromBinaryResponse(ByteArrayOutputStream buffer) throws Exception {
+//        byte[] fullMessageBytes = buffer.toByteArray();
+//        buffer.reset(); // Очищаем буфер
+//
+//        // Преобразуем байты в строку для заголовков
+//        String fullMessage = new String(fullMessageBytes, StandardCharsets.UTF_8);
+//
+//        // Разделяем заголовки и данные
+//        int headerEndIndex = fullMessage.indexOf("\r\n\r\n");
+//        if (headerEndIndex == -1) return "application/octet-stream";;
+//        String headers = fullMessage.substring(0, headerEndIndex);
+//        byte[] data = Arrays.copyOfRange(fullMessageBytes, headerEndIndex + 4, fullMessageBytes.length);
+//
+//        // Извлекаем Content-Type из заголовков
+//        String contentType = extractContentType(headers);
+//        return contentType;
+//    }
+//
+
+//    /**
+//     * Извлекает Content-Type из заголовков.
+//     */
+//    private static String extractContentType(String headers) {
+//        for (String line : headers.split("\r\n")) {
+//            if (line.startsWith("Content-Type:")) {
+//                return line.substring("Content-Type:".length()).trim();
+//            }
+//        }
+//        return "application/octet-stream"; // По умолчанию
+//    }
+//
 
 
 
