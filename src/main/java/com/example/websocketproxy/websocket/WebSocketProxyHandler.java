@@ -274,7 +274,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
     }
 
 
-    // найти все ключи содержащие diviceID
+    // найти все ключи содержащие diviceID т.к. id запросов содержат id устройств
     private List<String> completeTextResponseFutures(String deviceId) {
         // Создаем список ключей, которые нужно удалить
         List<String> keysToRemove = new ArrayList<>();
@@ -288,7 +288,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
         return keysToRemove;
     }
 
-    // найти все ключи содержащие diviceID
+    // найти все ключи содержащие diviceID т.к. id запросов содержат id устройств
     private List<String> completeBinaryResponseFutures(String deviceId) {
         // Создаем список ключей, которые нужно удалить
         List<String> keysToRemove = new ArrayList<>();
@@ -405,7 +405,6 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
 //        }
 //    }
 
-    //не вижу необходимости в обработке contentType, пока убрал
     private void handleBinaryResponse(String requestId, byte[] data) {
 
         if (requestId == null) {

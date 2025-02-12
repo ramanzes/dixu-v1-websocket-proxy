@@ -97,7 +97,7 @@ public class ProxyController {
 
         CompletableFuture<String> textResponseFuture = new CompletableFuture<>();
         CompletableFuture<byte[]> binaryResponseFuture = new CompletableFuture<>();
-        CompletableFuture<Object> combinedFuture = new CompletableFuture<>();
+//        CompletableFuture<Object> combinedFuture = new CompletableFuture<>();
 
 
         if (deviceSession == null || !deviceSession.isOpen()) {
@@ -114,9 +114,6 @@ public class ProxyController {
             //получаем тип контента из пути запроса/  !!! возможно здесь нужно как то надёжнее получать тип конетента для запроса
             String contentType = HttpRequest.getContentType(requestPath);
 
-            //связываем тип контента с id этого запроса
-//            RequestData.addContentTypeForRequestId(requestId,contentType);   //нигде не используется пока убрал
-
             // Сборка HTTP-запроса с добавлением requestId
             StringBuilder requestBuilder = new StringBuilder();
             requestBuilder.append(request.getMethod()).append(" ");
@@ -129,18 +126,8 @@ public class ProxyController {
             // Добавляем requestId в заголовки
             requestBuilder.append("X-Request-Id: ").append(requestId).append("\n");
 
-// здесь пока закоментил не вижу смысла дополнительно работать с куками если мы проксируем все поступающие заголовки из request
 
-//            // В методе proxyRequest если уже у нас не первый запрос и в заголовках гоняем куки
-//            String cookies = request.getHeader("Cookie");
-//            if (cookies != null) {
-//                requestBuilder.append("Cookie: ").append(cookies).append("\n");
-////                MyLogger.logServer("Cookies: " + cookies,true); // Логируем cookies
-//
-//                MyLogger.logServer("Cookies: " + cookies); // Логируем cookies
-//            }
-
-            // Добавляем все остальные поля заголовка
+        // Добавляем все остальные поля заголовка
             Enumeration<String> headerNames = request.getHeaderNames();
             while (headerNames.hasMoreElements()) {
                 String headerName = headerNames.nextElement();
@@ -177,50 +164,16 @@ public class ProxyController {
             //здесь нужно проверить что мы получили, если только заголовки, то будет бинарное тело.
             //если целиком сообщение то бинарных данных уже не будет
 
-            //создаём хранилище для тела текстовых данных без заголовков
-//            String response = "";
-
             HttpHeaders responseHeaders = HttpResponse.extractHeaders(textResponse);
 
             //меняем контет тип. дальше он работает для ответа
             contentType = responseHeaders.getFirst(HttpHeaders.CONTENT_TYPE);
             String responseTextBody = HttpResponse.extractBody(textResponse);
+            int statusCode = HttpResponse.extractStatusCode(textResponse);
 
-
-
-////          общее хранилище для полученных заголовков текущего ответа. либо текстовое, либо бинарное оба содержат текстовые заголовки
-//            HttpHeaders responseHeaders = new HttpHeaders();
-//            // Проверяем, содержит ли ответ только заголовки или заголовки с телом
-//            if (textResponse.contains("\r\n\r\n")) {
-//                // Разделяем заголовки и тело
-//                String[] parts = textResponse.split("\r\n\r\n", 2);
-//                String headers = parts[0];
-//                response = parts.length > 1 ? parts[1] : "";
-//
-//                MyLogger.logServer("Заголовки:");
-//                MyLogger.logServer(headers);
-//                MyLogger.logServer("Тело:");
-////                MyLogger.logServer(response);
-//
-//
-//
-//                // Парсим заголовки для любого типа ответа
-//                for (String line : headers.split("\r\n")) {
-//                    if (line.startsWith("Set-Cookie") || line.contains(":")) {
-//                        String[] headerParts = line.split(":", 2);
-//                        if (headerParts.length == 2) {
-//                            String headerName = headerParts[0].trim();
-//                            String headerValue = headerParts[1].trim();
-//
-//                            // Добавляем заголовки в ответ
-//                            responseHeaders.add(headerName, headerValue);
-//                        }
-//                    }
-//                }
-//            }
 
             byte[] binaryResponse = null;
-            if (responseTextBody.length()==0) {
+            if (responseTextBody.length()==0 && statusCode!=304 && statusCode!=204 && statusCode!=205) {
                 MyLogger.logServer("Ответ содержит только заголовки."+" значит ждём и бинарные данные");
                 binaryResponseFuture = webSocketProxyHandler.waitForBinaryResponse(requestId);
                 binaryResponse = binaryResponseFuture.get(120, TimeUnit.SECONDS);
@@ -237,65 +190,22 @@ public class ProxyController {
        //     combinedFuture = CompletableFuture.anyOf(textResponseFuture, binaryResponseFuture);
 
 
-//            вот здесь мы уже должны иметь ответ от клиента с заголовками в которых есть куки
 
-
-//            //Ожидает завершения CompletableFuture с помощью combinedFuture.get(). т.е. когда будет получено всё сообщение отправленное по частям сможем продолжить
-//            Object response = combinedFuture.get(120, TimeUnit.SECONDS); // Увеличиваем таймаут
-
-//            if (HttpRequest.isHtmlPageRequest(requestPath)&&!(response instanceof String)){
-////                MyLogger.logServer("ожидали получить текстовый ответ, а получили бинарный");
-//                throw new MyLogger.CustomException("ожидали получить текстовый ответ, а получили бинарный","несоответствие ожиданий");
-//            } else if (!HttpRequest.isHtmlPageRequest(requestPath)&&!(response instanceof byte[])){
-////                MyLogger.logServer("ожидали получить бинарный ответ, а получили текстовый");
-//                throw new MyLogger.CustomException("ожидали получить бинарный ответ, а получили текстовый","несоответствие ожиданий");
-//            }
-
-//            String headers="";
 
             if (binaryResponse==null ) {
 
                 // Текстовый ответ
                 MyLogger.logServer("возвращаем текстовый ответ от клиента");
 
-//                String fullResponse = (String) response;
-
-                // Разделяем заголовки и тело
-//                String[] parts = fullResponse.split("\r\n\r\n", 2); // \r\n\r\n — разделитель между заголовками и телом
-
-//                String body;
-//
-//                if (parts.length > 1) {
-//                    headers = parts[0]; // Заголовки
-//                    body = parts[1];           // Тело
-//                    MyLogger.logServer("Заголовки:\n" + headers );
-//                } else {
-//                    body = fullResponse; // Если разделителя нет, вся строка считается телом
-//                }
-
-                // Создаем ResponseEntity с заголовками
-//                HttpHeaders responseHeaders = new HttpHeaders();
-
-//                // Парсим заголовки устройства
-//                for (String line : headers.split("\r\n")) {
-//                    if (line.startsWith("Set-Cookie") || line.contains(":")) {
-//                        String[] headerParts = line.split(":", 2);
-//                        if (headerParts.length == 2) {
-//                            String headerName = headerParts[0].trim();
-//                            String headerValue = headerParts[1].trim();
-//
-//                            // Добавляем заголовки в ответ
-//                            responseHeaders.add(headerName, headerValue);
-//                        }
-//                    }
-//                }
-
                 // Возвращаем только тело ответа
 //                return ResponseEntity.ok(body.getBytes(StandardCharsets.UTF_8));
+
+                String updateBody = HttpResponse.modifyHtmlPaths(String.valueOf(responseTextBody),contentType,deviceId);
                 // Возвращаем текстовый ответ с заголовками
                 return ResponseEntity.ok()
                         .headers(responseHeaders)
-                        .body(responseTextBody.getBytes(StandardCharsets.UTF_8));
+                        .body(updateBody.getBytes(StandardCharsets.UTF_8));
+//                        .body(responseTextBody.getBytes(StandardCharsets.UTF_8));
 
             }
             //  значит есть бинарные данные
@@ -310,47 +220,32 @@ public class ProxyController {
                         throw new IllegalArgumentException("Некорректный contentType: " + contentType, e);
                     }
 
-//                    HttpHeaders responseHeaders = new HttpHeaders();
-
-                    // Копируем заголовки устройства
-//                    for (String line : headers.split("\r\n")) {
-//                        if (line.startsWith("Set-Cookie") || line.contains(":")) {
-//                            String[] headerParts = line.split(":", 2);
-//                            if (headerParts.length == 2) {
-//                                String headerName = headerParts[0].trim();
-//                                String headerValue = headerParts[1].trim();
-//
-//                                // Добавляем заголовки в ответ
-//                                responseHeaders.add(headerName, headerValue);
-//                            }
-//                        }
-//                    }
 
                     Object body = null;
                     //  здесь логика можно распаковать как бинарное так и текстовое сообщение
+                    // также проверить метод isGzipped все ли типы сжатых данных он обработает или только gzip сейчас
                     if (HttpResponse.isGzipped(responseHeaders))  {
                         MyLogger.logServer("Данные сжаты, разжимаем...:\n");
                         body = decompressGzip(binaryResponse,responseHeaders);
                         responseHeaders.remove("Content-Encoding"); // Убираем, так как уже разархивировали
                         responseHeaders.remove("Transfer-Encoding");
+                    } else {
+                        body = binaryResponse;
                     }
                     if (body instanceof String){
+                        String updateBody = HttpResponse.modifyHtmlPaths(String.valueOf(body),contentType,deviceId);
                         //был сжат текстовый тип контента
+                        byte[] textBytes = ((String) updateBody).getBytes(StandardCharsets.UTF_8);
+                        responseHeaders.setContentLength(textBytes.length); // Устанавливаем реальную длину
                         return ResponseEntity.ok()
                                 .headers(responseHeaders)
-                                .body(responseTextBody.getBytes(StandardCharsets.UTF_8));
-                    } else if (!body.equals(null)){
-                        //были сжаты бинарные данные
+                                .body(textBytes);
+                    } else {
                         return ResponseEntity.ok()
                                 .headers(responseHeaders)
                                 .contentType(mediaType)
-                                .body(binaryResponse);
+                                .body((byte[]) body);
                     }
-                    // данные не были сжаты это просто бинарные данные
-                    return ResponseEntity.ok()
-                            .headers(responseHeaders)
-                            .contentType(mediaType)
-                            .body(binaryResponse);
 
                 } catch (Exception e) {
                     MyLogger.logServer("Ошибка при формировании ответа: " + e.getMessage());
