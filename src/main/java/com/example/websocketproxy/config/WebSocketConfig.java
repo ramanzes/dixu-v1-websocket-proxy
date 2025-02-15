@@ -5,6 +5,8 @@ import com.example.websocketproxy.websocket.ProxyWebSocketHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.socket.config.annotation.*;
 
 @Configuration
@@ -14,6 +16,7 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
    public static final boolean DEBUG = true;
    private final ProxyWebSocketHandler proxyWebSocketHandler;
     private final WebSocketProxyHandler webSocketProxyHandler;
+
 
     public WebSocketConfig(ProxyWebSocketHandler proxyWebSocketHandler, WebSocketProxyHandler webSocketProxyHandler) {
         this.proxyWebSocketHandler = proxyWebSocketHandler;
@@ -38,7 +41,11 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
 
         // Регистрируем WebSocketProxyHandler на /device-ws
         registry.addHandler(webSocketProxyHandler, "/ws")
-                .setAllowedOrigins("*"); // Разрешаем запросы с любых доменов
+//                .setAllowedOrigins("*");  // Разрешаем запросы с любых доменов
+         .setAllowedOriginPatterns("http://localhost:*", "https://*.example.com");
+//                .setAllowedOriginPatterns("https://*.example.com", "http://localhost:*","0.0.0.0","127.0.0.1") // Используем allowedOriginPatterns
+//                .setAllowedOrigins(null) // Полностью отключаем проверку источников
+//                .withSockJS(); // Добавляем поддержку SockJS для обратной совместимости
     }
 
     // Bean для RestTemplate, если требуется HTTP-клиент
@@ -46,6 +53,8 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
     public RestTemplate restTemplate() {
         return new RestTemplate();
     }
+
+
 }
 
 

@@ -2,6 +2,7 @@ package com.example.websocketproxy.controller;
 
 import com.example.websocketproxy.services.HttpRequest;
 import com.example.websocketproxy.services.HttpResponse;
+import com.example.websocketproxy.services.MyHttpUtils;
 import com.example.websocketproxy.websocket.WebSocketProxyHandler;
 import com.example.websocketproxy.services.DeviceSessionManager;
 import com.example.websocketproxy.services.logsandexceptions.MyLogger;
@@ -24,9 +25,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.zip.GZIPInputStream;
 
-
-
-
+import static com.example.websocketproxy.services.MyHttpUtils.decompress;
 
 
 @Controller
@@ -54,28 +53,9 @@ public class ProxyController {
 //    }
 
 
-    public static Object decompressGzip(byte[] compressedData, HttpHeaders headers) {
-        try (ByteArrayInputStream byteStream = new ByteArrayInputStream(compressedData);
-             GZIPInputStream gzipStream = new GZIPInputStream(byteStream);
-             ByteArrayOutputStream outStream = new ByteArrayOutputStream()) {
 
-            byte[] buffer = new byte[1024];
-            int len;
-            while ((len = gzipStream.read(buffer)) != -1) {
-                outStream.write(buffer, 0, len);
-            }
-            byte[] decompressedData = outStream.toByteArray();
-            String contentType = headers.getFirst(HttpHeaders.CONTENT_TYPE);
-            // Если это текст, преобразуем в строку
-            if (contentType != null && HttpResponse.isTextResponse(contentType)) {
-                return new String(decompressedData, StandardCharsets.UTF_8);
-            }
 
-            return (byte []) decompressedData; // Оставляем бинарные данные
-        } catch (Exception e) {
-            throw new RuntimeException("Ошибка при разжатии GZIP", e);
-        }
-    }
+
 
     public ProxyController(DeviceSessionManager deviceSessionManager, WebSocketProxyHandler webSocketProxyHandler) {
         this.deviceSessionManager = deviceSessionManager;
@@ -175,6 +155,7 @@ public class ProxyController {
             byte[] binaryResponse = null;
             if (responseTextBody.length()==0 && statusCode!=304 && statusCode!=204 && statusCode!=205) {
                 MyLogger.logServer("Ответ содержит только заголовки."+" значит ждём и бинарные данные");
+                // получаем бинарные данные для того же запроса т.к. requestId прежний, как у полученного заголовка
                 binaryResponseFuture = webSocketProxyHandler.waitForBinaryResponse(requestId);
                 binaryResponse = binaryResponseFuture.get(120, TimeUnit.SECONDS);
             }
@@ -224,9 +205,9 @@ public class ProxyController {
                     Object body = null;
                     //  здесь логика можно распаковать как бинарное так и текстовое сообщение
                     // также проверить метод isGzipped все ли типы сжатых данных он обработает или только gzip сейчас
-                    if (HttpResponse.isGzipped(responseHeaders))  {
+                    if (MyHttpUtils.isCompressed(responseHeaders))  {
                         MyLogger.logServer("Данные сжаты, разжимаем...:\n");
-                        body = decompressGzip(binaryResponse,responseHeaders);
+                        body = decompress(binaryResponse,responseHeaders);
                         responseHeaders.remove("Content-Encoding"); // Убираем, так как уже разархивировали
                         responseHeaders.remove("Transfer-Encoding");
                     } else {
