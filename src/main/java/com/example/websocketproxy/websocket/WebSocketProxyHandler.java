@@ -85,43 +85,6 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
     }
 
 
-    private String getHeaders(String message) {
-        int headerEndIndex = message.indexOf("\r\n\r\n");
-        if (headerEndIndex == -1) {
-            MyLogger.logServer("No headers found in the response");
-            return "";
-        }
-        String headers = message.substring(0,headerEndIndex);
-        MyLogger.logServer(headers,true);
-        return headers;
-    }
-////Извлечение requestId из ответов
-//    private String extractRequestId(String message) {
-//
-//        String headers = getHeaders(message);
-//
-//        for (String line : headers.split("\r\n")) {
-//            if (line.startsWith("X-Request-Id:")) {
-//                return line.substring("X-Request-Id:".length()).trim();
-//            }
-//        }
-//        return null;
-//    }
-
-    //Извлечение куков из ответов
-    private List<String> extractCookies(String message) {
-        List<String> cookies = new ArrayList<>();
-        String headers = getHeaders(message);
-
-        for (String line : headers.split("\r\n")) {
-            if (line.startsWith("Set-Cookie:")) {
-                // Извлекаем куку и добавляем в список
-                String cookie = line.substring("Set-Cookie:".length()).trim();
-                cookies.add(cookie);
-            }
-        }
-        return cookies;
-    }
 
 // когда сообщения по вебсокету приходят от устройства мы попадаем сюда
     @Override

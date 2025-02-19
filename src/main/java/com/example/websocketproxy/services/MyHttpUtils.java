@@ -7,13 +7,30 @@ import org.springframework.http.HttpHeaders;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 import java.util.zip.InflaterInputStream;
 
 import org.apache.commons.compress.compressors.lzw.LZWInputStream;
+import org.springframework.stereotype.Component;
 
+@Component
 public class MyHttpUtils {
+    private String getHeaders(String message) {
+        int headerEndIndex = message.indexOf("\r\n\r\n");
+        if (headerEndIndex == -1) {
+            MyLogger.logServer("No headers found in the response");
+            return "";
+        }
+        String headers = message.substring(0, headerEndIndex);
+        MyLogger.logServer(headers, true);
+        return headers;
+    }
 
     public static boolean isCompressed(HttpHeaders headers) {
         String encoding = headers.getFirst("Content-Encoding");
@@ -23,6 +40,20 @@ public class MyHttpUtils {
                 encoding.contains("br") || encoding.contains("compress");
     }
 
+
+    //Если данные в POST-запросе являются текстовыми, вы можете сжимать их перед отправкой.
+    private static byte[] compress(byte[] data) throws IOException {
+        try (ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+             GZIPOutputStream gzipOutputStream = new GZIPOutputStream(byteArrayOutputStream)) {
+            gzipOutputStream.write(data);
+            gzipOutputStream.close();
+            return byteArrayOutputStream.toByteArray();
+        }
+
+//    // При отправке текстовых данных
+//    byte[] compressedData = compress(requestBody.getBytes(StandardCharsets.UTF_8));
+//    sendBinaryMessage(deviceSession, requestId, compressedData);
+    }
 
     //!!! нужно разжимать все стандартные алгоритмы Content-Encoding, включая brotli, deflate, gzip и compress
     //может при распаковке возвращать как текстовые данные String так и byte[]
@@ -42,6 +73,18 @@ public class MyHttpUtils {
         }
         return compressedData; // Если неизвестный формат — вернуть как есть
     }
+
+
+    public static List<byte[]> splitDataIntoChunks(byte[] data, int chunkSize) {
+        List<byte[]> chunks = new ArrayList<>();
+        for (int i = 0; i < data.length; i += chunkSize) {
+            int end = Math.min(data.length, i + chunkSize);
+            byte[] chunk = Arrays.copyOfRange(data, i, end);
+            chunks.add(chunk);
+        }
+        return chunks;
+    }
+
 
     public static Object returnDecompressData(ByteArrayOutputStream outStream, HttpHeaders headers){
         byte[] decompressedData = outStream.toByteArray();

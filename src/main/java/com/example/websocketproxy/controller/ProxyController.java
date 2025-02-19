@@ -1,5 +1,6 @@
 package com.example.websocketproxy.controller;
 
+import com.example.websocketproxy.config.WebSocketConfig;
 import com.example.websocketproxy.services.HttpRequest;
 import com.example.websocketproxy.services.HttpResponse;
 import com.example.websocketproxy.services.MyHttpUtils;
@@ -7,22 +8,23 @@ import com.example.websocketproxy.websocket.WebSocketProxyHandler;
 import com.example.websocketproxy.services.DeviceSessionManager;
 import com.example.websocketproxy.services.logsandexceptions.MyLogger;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.websocket.Session;
 import org.springframework.http.*;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.io.BufferedReader;
-import java.io.IOException;
+import java.io.*;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Enumeration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.util.zip.GZIPInputStream;
 
 import static com.example.websocketproxy.services.MyHttpUtils.decompress;
@@ -33,42 +35,55 @@ public class ProxyController {
 
     private final DeviceSessionManager deviceSessionManager;
     private final WebSocketProxyHandler webSocketProxyHandler;
-
-
-
-//    public static byte[] decompressGzip(byte[] compressedData) {
-//        try (ByteArrayInputStream byteStream = new ByteArrayInputStream(compressedData);
-//             GZIPInputStream gzipStream = new GZIPInputStream(byteStream);
-//             ByteArrayOutputStream outStream = new ByteArrayOutputStream()) {
-//
-//            byte[] buffer = new byte[1024];
-//            int len;
-//            while ((len = gzipStream.read(buffer)) != -1) {
-//                outStream.write(buffer, 0, len);
-//            }
-//            return outStream.toByteArray();
-//        } catch (Exception e) {
-//            throw new RuntimeException("Ошибка при разжатии GZIP", e);
-//        }
-//    }
+    private final MyHttpUtils myHttpUtils;
+    private WebSocketSession deviceSession;
 
 
 
 
 
-
-    public ProxyController(DeviceSessionManager deviceSessionManager, WebSocketProxyHandler webSocketProxyHandler) {
+    public ProxyController(DeviceSessionManager deviceSessionManager, WebSocketProxyHandler webSocketProxyHandler, MyHttpUtils myHttpUtils) {
         this.deviceSessionManager = deviceSessionManager;
         this.webSocketProxyHandler = webSocketProxyHandler;
+        this.myHttpUtils = myHttpUtils;
     }
 
     private final Object sendLock = new Object(); // Объект для синхронизации
 //можно попробовать и без синхронизации, это было сделоно то того как у каждого запроса был уникальный идентификатор
-    public void sendMessage(WebSocketSession session, TextMessage message) throws IOException, IOException {
+    public void sendMessage(WebSocketSession session, TextMessage message) throws IOException {
         synchronized (sendLock) {
             session.sendMessage(message);
         }
     }
+
+//Отправка фрагментированных бинарных сообщений
+    public static void sendBinaryMessage(WebSocketSession session, String requestId, byte[] data) throws IOException {
+        int length = data.length;
+        int offset = 0;
+
+        while (offset < length) {
+            int chunkSize = Math.min(WebSocketConfig.BUFFER_SIZE, length - offset);
+            byte[] chunkData = new byte[chunkSize];
+            System.arraycopy(data, offset, chunkData, 0, chunkSize);
+
+            boolean isLast = (offset + chunkSize >= length);
+
+            // Создаем буфер для метаданных + данные
+            ByteArrayOutputStream messageStream = new ByteArrayOutputStream();
+            messageStream.write(requestId.getBytes(StandardCharsets.UTF_8)); // Добавляем requestId
+            messageStream.write(chunkData); // Добавляем сам фрагмент
+
+            byte[] messageBytes = messageStream.toByteArray();
+
+            // Отправляем фрагмент через WebSocket
+            session.sendMessage(new BinaryMessage(messageBytes, isLast));
+
+            offset += chunkSize;
+        }
+
+        MyLogger.logServer("Бинарное сообщение для запроса [" + requestId + "] отправлено полностью", true);
+    }
+
 
     @RequestMapping(value = "/p/{deviceId}/**", method = {RequestMethod.GET, RequestMethod.POST})
     public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
@@ -117,10 +132,7 @@ public class ProxyController {
             }
             requestBuilder.append("\n");
 
-            if ("POST".equalsIgnoreCase(request.getMethod())) {
-                String body = new BufferedReader(request.getReader()).lines().collect(Collectors.joining("\n"));
-                requestBuilder.append(body);
-            }
+
 
             String httpRequest = requestBuilder.toString();
 
@@ -128,6 +140,26 @@ public class ProxyController {
             MyLogger.logServer("httpRequest: ["+httpRequest+"]");
             // Отправляем запрос устройству через WebSocket
             sendMessage(deviceSession, new TextMessage(httpRequest));
+
+            //после отправки текстовых заголовков отправляем бинарные данные массива пост
+
+            if ("POST".equalsIgnoreCase(request.getMethod())) {
+//                String body = new BufferedReader(request.getReader()).lines().collect(Collectors.joining("\n"));
+//                requestBuilder.append(body);
+
+                // Читаем и отправляем данные потоково
+                InputStream requestBodyStream = request.getInputStream();
+                byte[] buffer = new byte[WebSocketConfig.BUFFER_SIZE];
+                int bytesRead;
+
+                while ((bytesRead = requestBodyStream.read(buffer)) != -1) {
+                    sendBinaryMessage(deviceSession, requestId, Arrays.copyOf(buffer, bytesRead));
+                }
+
+                MyLogger.logServer("POST-данные для [" + deviceId + "] отправлены полностью", true);
+
+
+            }
 
             // Ждем ответ от устройства
             //здесь можно изменить на ожидание приёма сразу обоих типов данных. т.к. бинарные данные имеют текстовый заголовок. но только чисто текстовые данные не имеют бинарных это нужно учесть.
@@ -140,6 +172,9 @@ public class ProxyController {
             // текстовые данные  будут всегда т.к. мы получаем заголовки для обоих типов данных в тексте
 
             String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
+
+
+
 
             //здесь нужно проверить что мы получили, если только заголовки, то будет бинарное тело.
             //если целиком сообщение то бинарных данных уже не будет
@@ -180,8 +215,18 @@ public class ProxyController {
 
                 // Возвращаем только тело ответа
 //                return ResponseEntity.ok(body.getBytes(StandardCharsets.UTF_8));
+                int headerLength = responseHeaders.toString().getBytes().length;
+                MyLogger.logServer("headerLength = " + headerLength);
+                int oldContentLength = headerLength+responseTextBody.length();
+                MyLogger.logServer("oldContentLength = " + oldContentLength);
 
                 String updateBody = HttpResponse.modifyHtmlPaths(String.valueOf(responseTextBody),contentType,deviceId);
+                int newContentLength = headerLength+updateBody.length()+6;
+                MyLogger.logServer("headerLength = " + headerLength);
+                MyLogger.logServer("newContentLength = "+newContentLength);
+                //обновляем длину контента после изменения
+                responseHeaders.setContentLength(newContentLength);
+//                responseHeaders.set("Content-Length", String.valueOf(responseHeaders. +updateBody.length()));
                 // Возвращаем текстовый ответ с заголовками
                 return ResponseEntity.ok()
                         .headers(responseHeaders)
@@ -205,10 +250,9 @@ public class ProxyController {
                     Object body = null;
                     //  здесь логика можно распаковать как бинарное так и текстовое сообщение
                     // также проверить метод isGzipped все ли типы сжатых данных он обработает или только gzip сейчас
-                    if (MyHttpUtils.isCompressed(responseHeaders))  {
+                    if (myHttpUtils.isCompressed(responseHeaders))  {
                         MyLogger.logServer("Данные сжаты, разжимаем...:\n");
-                        body = decompress(binaryResponse,responseHeaders);
-                        responseHeaders.remove("Content-Encoding"); // Убираем, так как уже разархивировали
+                        body = decompress(binaryResponse,responseHeaders);responseHeaders.remove("Content-Encoding"); // Убираем, так как уже разархивировали
                         responseHeaders.remove("Transfer-Encoding");
                     } else {
                         body = binaryResponse;
@@ -217,7 +261,10 @@ public class ProxyController {
                         String updateBody = HttpResponse.modifyHtmlPaths(String.valueOf(body),contentType,deviceId);
                         //был сжат текстовый тип контента
                         byte[] textBytes = ((String) updateBody).getBytes(StandardCharsets.UTF_8);
-                        responseHeaders.setContentLength(textBytes.length); // Устанавливаем реальную длину
+
+                        // Устанавливаем реальную длину после внесения изменений длины ссылок
+                        responseHeaders.setContentLength(responseHeaders.toString().getBytes().length+updateBody.length()+6);
+//                        responseHeaders.setContentLength(textBytes.length); // Устанавливаем реальную длину
                         return ResponseEntity.ok()
                                 .headers(responseHeaders)
                                 .body(textBytes);

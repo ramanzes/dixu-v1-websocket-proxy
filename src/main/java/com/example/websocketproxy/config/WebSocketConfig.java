@@ -15,7 +15,7 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
    public static final int BUFFER_SIZE = 4096;
    public static final boolean DEBUG = true;
    private final ProxyWebSocketHandler proxyWebSocketHandler;
-    private final WebSocketProxyHandler webSocketProxyHandler;
+   private final WebSocketProxyHandler webSocketProxyHandler;
 
 
     public WebSocketConfig(ProxyWebSocketHandler proxyWebSocketHandler, WebSocketProxyHandler webSocketProxyHandler) {
