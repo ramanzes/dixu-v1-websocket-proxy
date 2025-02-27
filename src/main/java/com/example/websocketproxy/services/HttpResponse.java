@@ -2,13 +2,19 @@ package com.example.websocketproxy.services;
 
 import com.example.websocketproxy.services.logsandexceptions.MyLogger;
 import com.example.websocketproxy.services.logsandexceptions.exceptions.MyOtherExceptions;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.InvalidMediaTypeException;
-import org.springframework.http.MediaType;
+import com.example.websocketproxy.websocket.WebSocketProxyHandler;
+import org.springframework.http.*;
+import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static com.example.websocketproxy.services.MyWebsocketUtils.decompress;
+
+@Component
 public class HttpResponse {
 
 
@@ -176,6 +182,81 @@ public class HttpResponse {
 
 
 
+    //метод для обработки ответа устройства
+    public ResponseEntity<?> processDeviceResponse(String requestId, String deviceId, WebSocketProxyHandler webSocketProxyHandler, MyWebsocketUtils myWebsocketUtils) throws Exception {
+        // Ждем ответ от устройства
+        CompletableFuture<String> textResponseFuture = webSocketProxyHandler.waitForResponse(requestId);
+        String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
+
+        // Извлекаем заголовки и тело текстового ответа
+        HttpHeaders responseHeaders = HttpResponse.extractHeaders(textResponse);
+        String contentType = responseHeaders.getFirst(HttpHeaders.CONTENT_TYPE);
+        String responseTextBody = HttpResponse.extractBody(textResponse);
+        int statusCode = HttpResponse.extractStatusCode(textResponse);
+
+        byte[] binaryResponse = null;
+        if (responseTextBody.length() == 0 && statusCode != 304 && statusCode != 204 && statusCode != 205) {
+            MyLogger.logServer("Ответ содержит только заголовки." + " значит ждём и бинарные данные");
+            // Получаем бинарные данные для того же запроса
+            CompletableFuture<byte[]> binaryResponseFuture = webSocketProxyHandler.waitForBinaryResponse(requestId);
+            binaryResponse = binaryResponseFuture.get(120, TimeUnit.SECONDS);
+        }
+
+        if (binaryResponse == null) {
+            // Текстовый ответ
+            MyLogger.logServer("возвращаем текстовый ответ от клиента");
+
+            int headerLength = responseHeaders.toString().getBytes().length;
+            int oldContentLength = headerLength + responseTextBody.length();
+            String updateBody = HttpResponse.modifyHtmlPaths(responseTextBody, contentType, deviceId);
+            int newContentLength = headerLength + updateBody.length() + 6;
+
+            responseHeaders.setContentLength(newContentLength);
+
+            return ResponseEntity.ok()
+                    .headers(responseHeaders)
+                    .body(updateBody.getBytes(StandardCharsets.UTF_8));
+        } else {
+            try {
+                MyLogger.logServer("Возвращаем бинарный ответ от клиента, contentType: " + contentType, true);
+
+                MediaType mediaType;
+                try {
+                    mediaType = MediaType.valueOf(contentType);
+                } catch (InvalidMediaTypeException e) {
+                    throw new IllegalArgumentException("Некорректный contentType: " + contentType, e);
+                }
+
+                Object body = null;
+                if (myWebsocketUtils.isCompressed(responseHeaders)) {
+                    MyLogger.logServer("Данные сжаты, разжимаем...:\n");
+                    body = decompress(binaryResponse, responseHeaders);
+                    responseHeaders.remove("Content-Encoding");
+                    responseHeaders.remove("Transfer-Encoding");
+                } else {
+                    body = binaryResponse;
+                }
+
+                if (body instanceof String) {
+                    String updateBody = HttpResponse.modifyHtmlPaths((String) body, contentType, deviceId);
+                    byte[] textBytes = updateBody.getBytes(StandardCharsets.UTF_8);
+                    responseHeaders.setContentLength(responseHeaders.toString().getBytes().length + updateBody.length() + 6);
+
+                    return ResponseEntity.ok()
+                            .headers(responseHeaders)
+                            .body(textBytes);
+                } else {
+                    return ResponseEntity.ok()
+                            .headers(responseHeaders)
+                            .contentType(mediaType)
+                            .body((byte[]) body);
+                }
+            } catch (Exception e) {
+                MyLogger.logServer("Ошибка при формировании ответа: " + e.getMessage());
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error while processing binary response".getBytes(StandardCharsets.UTF_8));
+            }
+        }
+    }
 
 
 

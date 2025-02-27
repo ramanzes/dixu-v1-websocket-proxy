@@ -1,10 +1,19 @@
 package com.example.websocketproxy.services;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import java.nio.charset.StandardCharsets;
+import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
 import com.example.websocketproxy.services.logsandexceptions.MyLogger;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.stereotype.Component;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.HandlerMapping;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -13,6 +22,7 @@ import jakarta.servlet.http.Cookie;
 
 
 
+@Component
 //класс получения доступной информации по пути запроса
 public class HttpRequest {
 //метод для извлечения кук:
@@ -252,6 +262,9 @@ public class HttpRequest {
 
 
 
+
+
+
         public static String getUuid() {
             // Генерация уникального UUID
             UUID uniqueKey = UUID.randomUUID();
@@ -263,17 +276,79 @@ public class HttpRequest {
     }
 
 
-    private static final Map<String, String> contentTypeForRequestId = new ConcurrentHashMap<>();
+//    private static final Map<String, String> contentTypeForRequestId = new ConcurrentHashMap<>();
 
-    public static void addContentTypeForRequestId(String requestId, String contentType) {
-        contentTypeForRequestId.put(requestId, contentType);
+//    public static void addContentTypeForRequestId(String requestId, String contentType) {
+//        contentTypeForRequestId.put(requestId, contentType);
+//    }
+//
+//    public static String getContentTypeFromRequestId(String requestId) {
+//        return contentTypeForRequestId.get(requestId);
+//    }
+//
+//    public static void removeContentTypeRequestId(String requestId) {
+//        contentTypeForRequestId.remove(requestId);
+//    }
+
+
+    //метод формирует HTTP-запрос (httpRequest)
+    public Map<String, String> buildHttpRequest(HttpServletRequest request, String deviceId) throws Exception {
+        // Генерация уникального requestId для каждого запроса пользователя
+        String requestId = this.generateRequestId(deviceId);
+
+        // Получение пути запроса
+        String requestPath = this.getPathFromRequest(request, deviceId);
+
+        // Сборка HTTP-запроса с добавлением requestId
+        StringBuilder requestBuilder = new StringBuilder();
+        requestBuilder.append(request.getMethod()).append(" ");
+        // Добавляем путь и query parameters (если есть)
+        String queryString = request.getQueryString(); // Получаем query parameters
+        String fullPath = requestPath + (queryString != null ? "?" + queryString : "");
+        requestBuilder.append(fullPath).append(" HTTP/1.1\n");
+        // Добавляем requestId в заголовки
+        requestBuilder.append("X-Request-Id: ").append(requestId).append("\n");
+
+        // Добавляем все остальные поля заголовка
+        Enumeration<String> headerNames = request.getHeaderNames();
+        while (headerNames.hasMoreElements()) {
+            String headerName = headerNames.nextElement();
+            String headerValue = request.getHeader(headerName);
+            requestBuilder.append(headerName).append(": ").append(headerValue).append("\n");
+            MyLogger.logServer(headerName, true);
+        }
+        requestBuilder.append("\n");
+
+        // Создаем мапу и помещаем туда пару ключ-значение
+        Map<String, String> httpRequestMap = new HashMap<>();
+        httpRequestMap.put(requestId, requestBuilder.toString());
+
+        return httpRequestMap;
     }
 
-    public static String getContentTypeFromRequestId(String requestId) {
-        return contentTypeForRequestId.get(requestId);
+
+
+    public static byte[] buildMultipartFormData(String boundary, String fieldName, MultipartFile file) throws IOException {
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintWriter writer = new PrintWriter(new OutputStreamWriter(outputStream, StandardCharsets.UTF_8), true);
+
+        // Добавляем границу
+        writer.append("--").append(boundary).append("\r\n");
+
+        // Добавляем метаданные файла
+        writer.append("Content-Disposition: form-data; name=\"").append(fieldName).append("\"; filename=\"").append(file.getOriginalFilename()).append("\"\r\n");
+        writer.append("Content-Type: ").append(file.getContentType()).append("\r\n");
+        writer.append("\r\n");
+        writer.flush();
+
+        // Добавляем бинарные данные файла
+        outputStream.write(file.getBytes());
+
+        // Завершаем часть
+        writer.append("\r\n").append("--").append(boundary).append("--\r\n");
+        writer.flush();
+
+        return outputStream.toByteArray();
     }
 
-    public static void removeContentTypeRequestId(String requestId) {
-        contentTypeForRequestId.remove(requestId);
-    }
 }

@@ -3,31 +3,29 @@ package com.example.websocketproxy.controller;
 import com.example.websocketproxy.config.WebSocketConfig;
 import com.example.websocketproxy.services.HttpRequest;
 import com.example.websocketproxy.services.HttpResponse;
-import com.example.websocketproxy.services.MyHttpUtils;
+import com.example.websocketproxy.services.MyWebsocketUtils;
 import com.example.websocketproxy.websocket.WebSocketProxyHandler;
 import com.example.websocketproxy.services.DeviceSessionManager;
 import com.example.websocketproxy.services.logsandexceptions.MyLogger;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.websocket.Session;
 import org.springframework.http.*;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.socket.BinaryMessage;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.multipart.MultipartHttpServletRequest;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.*;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
-import java.util.zip.GZIPInputStream;
-
-import static com.example.websocketproxy.services.MyHttpUtils.decompress;
+import static com.example.websocketproxy.services.MyWebsocketUtils.decompress;
 
 
 @Controller
@@ -35,264 +33,383 @@ public class ProxyController {
 
     private final DeviceSessionManager deviceSessionManager;
     private final WebSocketProxyHandler webSocketProxyHandler;
-    private final MyHttpUtils myHttpUtils;
-    private WebSocketSession deviceSession;
+    private final MyWebsocketUtils myWebsocketUtils;
+    private final HttpRequest httpRequest;
+    private final HttpResponse httpResponse;
+//    private WebSocketSession deviceSession;
 
 
-
-
-
-    public ProxyController(DeviceSessionManager deviceSessionManager, WebSocketProxyHandler webSocketProxyHandler, MyHttpUtils myHttpUtils) {
+    public ProxyController(DeviceSessionManager deviceSessionManager, WebSocketProxyHandler webSocketProxyHandler, MyWebsocketUtils myWebsocketUtils, HttpRequest httpRequest, HttpResponse httpResponse) {
         this.deviceSessionManager = deviceSessionManager;
         this.webSocketProxyHandler = webSocketProxyHandler;
-        this.myHttpUtils = myHttpUtils;
+        this.myWebsocketUtils = myWebsocketUtils;
+        this.httpRequest = httpRequest;
+        this.httpResponse = httpResponse;
     }
 
-    private final Object sendLock = new Object(); // Объект для синхронизации
-//можно попробовать и без синхронизации, это было сделоно то того как у каждого запроса был уникальный идентификатор
-    public void sendMessage(WebSocketSession session, TextMessage message) throws IOException {
-        synchronized (sendLock) {
-            session.sendMessage(message);
+
+
+
+@RequestMapping(
+        value = "/p/{deviceId}/**",
+//        method = {RequestMethod.GET, RequestMethod.POST}
+        method = {RequestMethod.GET}
+)
+public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
+                                           HttpServletRequest request) {
+    WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
+
+    if (deviceSession == null || !deviceSession.isOpen()) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
+    }
+
+    try {
+        // Формируем HTTP-запрос и получаем его вместе с requestId
+        Map<String, String> httpRequestMap = httpRequest.buildHttpRequest(request, deviceId);
+        // Извлекаем requestId и сам запрос из мапы
+        String requestId = httpRequestMap.keySet().iterator().next();
+        String httpRequest = httpRequestMap.get(requestId);
+
+        MyLogger.logServer("requestPath: [ " + httpRequest.split("\n")[0] + "]");
+        MyLogger.logServer("httpRequest: ["+httpRequest+"]");
+        // Отправляем запрос устройству через WebSocket
+        myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
+
+        String method = request.getMethod();
+
+        // Потоковая передача тела POST-запроса
+        if ("POST".equalsIgnoreCase(method)) {
+            InputStream inputStream = request.getInputStream();
+            int initialBufferSize = WebSocketConfig.BUFFER_SIZE;
+
+            // Читаем первые байты, чтобы определить стратегию
+            byte[] initialBuffer = new byte[initialBufferSize];
+            // и сохраняем её в initialBuffer
+            int bytesRead = inputStream.read(initialBuffer);
+
+            if (bytesRead == -1) {
+                MyLogger.logServer("POST-запрос пустой", true);
+//                    return;
+            }
+            boolean shouldCompress = myWebsocketUtils.shouldCompress(request.getContentType(), bytesRead, request.getRequestURI());
+
+            byte[] requestBody;
+
+
+            if(bytesRead < 512){
+                MyLogger.logServer("Тело POST имеет маленький размер, отправляем сразу без сжатия в одном бинарном запросе, размер" + bytesRead + " байт");
+                // Отправляем только прочитанные данные
+                byte[] dataToSend = Arrays.copyOf(initialBuffer, bytesRead);
+                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, dataToSend, true, false);
+            } else if (shouldCompress) {
+                requestBody = MyWebsocketUtils.compressData(initialBuffer);
+                MyLogger.logServer("Тело POST сжато (GZIP), размер: " + requestBody.length + " байт");
+                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, requestBody, true, true);
+                // значит отправлено не всё и скорее всего остались в потоке ещё данные
+                if (bytesRead == WebSocketConfig.BUFFER_SIZE) {
+                    myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, true);
+                }
+            }
+
+            inputStream.close();
+
         }
+        // Вызываем новый метод для обработки ответа устройства
+        return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,deviceId,webSocketProxyHandler,myWebsocketUtils);
+
+    } catch (Exception e) {
+        e.printStackTrace();
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(("Error occurred: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
+    }
+}
+
+//обработка POST запросов для типа контента без multipart
+@PostMapping(
+        value = "/p/{deviceId}/**",
+        consumes = {
+            "application/json",
+            "application/xml",
+            "text/plain",
+            "application/x-www-form-urlencoded",
+            "application/octet-stream"
+        }
+)
+public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String deviceId,
+                                           HttpServletRequest request) {
+    WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
+
+    if (deviceSession == null || !deviceSession.isOpen()) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
     }
 
-//Отправка фрагментированных бинарных сообщений
-    public static void sendBinaryMessage(WebSocketSession session, String requestId, byte[] data) throws IOException {
-        int length = data.length;
-        int offset = 0;
+    try {
+        // Формируем HTTP-запрос и получаем его вместе с requestId
+        Map<String, String> httpRequestMap = httpRequest.buildHttpRequest(request, deviceId);
+        // Извлекаем requestId и сам запрос из мапы
+        String requestId = httpRequestMap.keySet().iterator().next();
+        String httpRequest = httpRequestMap.get(requestId);
 
-        while (offset < length) {
-            int chunkSize = Math.min(WebSocketConfig.BUFFER_SIZE, length - offset);
-            byte[] chunkData = new byte[chunkSize];
-            System.arraycopy(data, offset, chunkData, 0, chunkSize);
+        MyLogger.logServer("requestPath: [ " + httpRequest.split("\n")[0] + "]");
+        MyLogger.logServer("httpRequest: ["+httpRequest+"]");
+        // Отправляем запрос устройству через WebSocket
+        myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
 
-            boolean isLast = (offset + chunkSize >= length);
+        InputStream inputStream = request.getInputStream();
+        int initialBufferSize = WebSocketConfig.BUFFER_SIZE;
 
-            // Создаем буфер для метаданных + данные
-            ByteArrayOutputStream messageStream = new ByteArrayOutputStream();
-            messageStream.write(requestId.getBytes(StandardCharsets.UTF_8)); // Добавляем requestId
-            messageStream.write(chunkData); // Добавляем сам фрагмент
+        // Читаем первые байты, чтобы определить стратегию
+        byte[] initialBuffer = new byte[initialBufferSize];
+        // и сохраняем её в initialBuffer
+        int bytesRead = inputStream.read(initialBuffer);
 
-            byte[] messageBytes = messageStream.toByteArray();
+        if (bytesRead == -1) {
+            MyLogger.logServer("POST-запрос пустой", true);
+//                    return;
+        }
+        boolean shouldCompress = myWebsocketUtils.shouldCompress(request.getContentType(), bytesRead, request.getRequestURI());
 
-            // Отправляем фрагмент через WebSocket
-            session.sendMessage(new BinaryMessage(messageBytes, isLast));
+        byte[] requestBody;
 
-            offset += chunkSize;
+        if(bytesRead < 512){
+            MyLogger.logServer("Тело POST имеет маленький размер, отправляем сразу без сжатия в одном бинарном запросе, размер" + bytesRead + " байт");
+            // Отправляем только прочитанные данные
+            byte[] dataToSend = Arrays.copyOf(initialBuffer, bytesRead);
+            myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, dataToSend, true, false);
+        } else if (shouldCompress) {
+            requestBody = MyWebsocketUtils.compressData(initialBuffer);
+            MyLogger.logServer("Тело POST сжато (GZIP), размер: " + requestBody.length + " байт");
+            myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, requestBody, true, true);
+            // значит отправлено не всё и скорее всего остались в потоке ещё данные
+            if (bytesRead == WebSocketConfig.BUFFER_SIZE) {
+                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, true);
+            }
+        } else{
+            //это могут быть большие данные уже сжатые или не требующие сжатия по тем или иным причинам
+            MyLogger.logServer("Тело POST отправляется потоком без сжатия");
+            //отправляем уже считанную часть в самом начале
+            myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, initialBuffer, false, false);
+            // отправляем остальные части т.е. из inputStream уже считана первая часть продолжим от туда
+            myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream,false);
+            // Вызываем новый метод для обработки ответа устройства
         }
 
-        MyLogger.logServer("Бинарное сообщение для запроса [" + requestId + "] отправлено полностью", true);
+        inputStream.close();
+
+        // Вызываем новый метод для обработки ответа устройства
+        return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,deviceId,webSocketProxyHandler,myWebsocketUtils);
+
+    } catch (Exception e) {
+        e.printStackTrace();
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(("Error occurred: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
     }
+}
 
 
-    @RequestMapping(value = "/p/{deviceId}/**", method = {RequestMethod.GET, RequestMethod.POST})
-    public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
-                                               HttpServletRequest request) {
+//контроллер обрабатывает Post запросы multipart
+
+    @PostMapping(
+            value = "p/{deviceId}/**",
+            consumes = {
+                    "multipart/form-data"
+            }
+    )
+    public ResponseEntity<byte[]> proxyMultipartPostRequest(@PathVariable String deviceId,
+                                                            MultipartHttpServletRequest request) {
         WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
-
-        CompletableFuture<String> textResponseFuture = new CompletableFuture<>();
-        CompletableFuture<byte[]> binaryResponseFuture = new CompletableFuture<>();
-//        CompletableFuture<Object> combinedFuture = new CompletableFuture<>();
-
-
         if (deviceSession == null || !deviceSession.isOpen()) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
         }
 
         try {
-            // Генерация уникального requestId для каждого запроса пользователя
-            String requestId = HttpRequest.generateRequestId(deviceId);
-            //строка запроса
-            String requestPath = HttpRequest.getPathFromRequest(request,deviceId);
+            // Формируем HTTP-запрос и получаем его вместе с requestId
+            Map<String, String> httpRequestMap = httpRequest.buildHttpRequest(request, deviceId);
+            // Извлекаем requestId и сам запрос из мапы
+            String requestId = httpRequestMap.keySet().iterator().next();
+            String httpRequest = httpRequestMap.get(requestId);
 
+            MyLogger.logServer("requestPath: [ " + httpRequest.split("\n")[0] + "]");
+            MyLogger.logServer("httpRequest: [" + httpRequest + "]");
 
-            //получаем тип контента из пути запроса/  !!! возможно здесь нужно как то надёжнее получать тип конетента для запроса
-            String contentType = HttpRequest.getContentType(requestPath);
-
-            // Сборка HTTP-запроса с добавлением requestId
-            StringBuilder requestBuilder = new StringBuilder();
-            requestBuilder.append(request.getMethod()).append(" ");
-
-            // Добавляем путь и query parameters (если есть)
-            String queryString = request.getQueryString(); // Получаем query parameters
-            String fullPath = requestPath + (queryString != null ? "?" + queryString : "");
-            requestBuilder.append(fullPath).append(" HTTP/1.1\n");
-
-            // Добавляем requestId в заголовки
-            requestBuilder.append("X-Request-Id: ").append(requestId).append("\n");
-
-
-        // Добавляем все остальные поля заголовка
-            Enumeration<String> headerNames = request.getHeaderNames();
-            while (headerNames.hasMoreElements()) {
-                String headerName = headerNames.nextElement();
-                String headerValue = request.getHeader(headerName);
-                requestBuilder.append(headerName).append(": ").append(headerValue).append("\n");
-                MyLogger.logServer(headerName, true);
-            }
-            requestBuilder.append("\n");
-
-
-
-            String httpRequest = requestBuilder.toString();
-
-            MyLogger.logServer("requestPath: ["+requestPath+"]");
-            MyLogger.logServer("httpRequest: ["+httpRequest+"]");
             // Отправляем запрос устройству через WebSocket
-            sendMessage(deviceSession, new TextMessage(httpRequest));
+            myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
 
-            //после отправки текстовых заголовков отправляем бинарные данные массива пост
+            // Получаем boundary из заголовка Content-Type
+            String contentType = request.getContentType();
+            String boundary = contentType.substring(contentType.indexOf("boundary=") + 9);
 
-            if ("POST".equalsIgnoreCase(request.getMethod())) {
-//                String body = new BufferedReader(request.getReader()).lines().collect(Collectors.joining("\n"));
-//                requestBuilder.append(body);
+            // Обрабатываем multipart-данные
+            for (Map.Entry<String, MultipartFile> entry : request.getFileMap().entrySet()) {
+                MultipartFile file = entry.getValue();
+                String fileName = file.getOriginalFilename();
+                MyLogger.logServer("Обрабатываем файл: " + fileName);
 
-                // Читаем и отправляем данные потоково
-                InputStream requestBodyStream = request.getInputStream();
-                byte[] buffer = new byte[WebSocketConfig.BUFFER_SIZE];
-                int bytesRead;
-
-                while ((bytesRead = requestBodyStream.read(buffer)) != -1) {
-                    sendBinaryMessage(deviceSession, requestId, Arrays.copyOf(buffer, bytesRead));
-                }
-
-                MyLogger.logServer("POST-данные для [" + deviceId + "] отправлены полностью", true);
-
-
+                // Отправляем файл потоком
+               myWebsocketUtils.sendMultipartFormDataStream(deviceSession, requestId, boundary, entry.getKey(), file);
             }
 
-            // Ждем ответ от устройства
-            //здесь можно изменить на ожидание приёма сразу обоих типов данных. т.к. бинарные данные имеют текстовый заголовок. но только чисто текстовые данные не имеют бинарных это нужно учесть.
-
-//            if (HttpRequest.isHtmlPageRequest(requestPath))
-                textResponseFuture = webSocketProxyHandler.waitForResponse(requestId);
-//            else
-
-
-            // текстовые данные  будут всегда т.к. мы получаем заголовки для обоих типов данных в тексте
-
-            String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
-
-
-
-
-            //здесь нужно проверить что мы получили, если только заголовки, то будет бинарное тело.
-            //если целиком сообщение то бинарных данных уже не будет
-
-            HttpHeaders responseHeaders = HttpResponse.extractHeaders(textResponse);
-
-            //меняем контет тип. дальше он работает для ответа
-            contentType = responseHeaders.getFirst(HttpHeaders.CONTENT_TYPE);
-            String responseTextBody = HttpResponse.extractBody(textResponse);
-            int statusCode = HttpResponse.extractStatusCode(textResponse);
-
-
-            byte[] binaryResponse = null;
-            if (responseTextBody.length()==0 && statusCode!=304 && statusCode!=204 && statusCode!=205) {
-                MyLogger.logServer("Ответ содержит только заголовки."+" значит ждём и бинарные данные");
-                // получаем бинарные данные для того же запроса т.к. requestId прежний, как у полученного заголовка
-                binaryResponseFuture = webSocketProxyHandler.waitForBinaryResponse(requestId);
-                binaryResponse = binaryResponseFuture.get(120, TimeUnit.SECONDS);
+            // Обрабатываем текстовые данные формы (если есть)
+            Map<String, String[]> formData = request.getParameterMap();
+            for (Map.Entry<String, String[]> entry : formData.entrySet()) {
+                String key = entry.getKey();
+                String[] values = entry.getValue();
+                MyLogger.logServer("Текстовые данные формы: " + key + " = " + String.join(", ", values));
             }
 
+            // Вызываем метод для обработки ответа устройства
+            return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId, deviceId, webSocketProxyHandler, myWebsocketUtils);
 
-
-
-
-
-
-            // Ожидаем либо текстовый, либо бинарный ответ/ если это бинарные данные то в первой части у нас будет текстовый заголовок а в этой данные.
-            // если же у нас только текстовые данные, то здесь у нас не будет ответа
-       //     combinedFuture = CompletableFuture.anyOf(textResponseFuture, binaryResponseFuture);
-
-
-
-
-            if (binaryResponse==null ) {
-
-                // Текстовый ответ
-                MyLogger.logServer("возвращаем текстовый ответ от клиента");
-
-                // Возвращаем только тело ответа
-//                return ResponseEntity.ok(body.getBytes(StandardCharsets.UTF_8));
-                int headerLength = responseHeaders.toString().getBytes().length;
-                MyLogger.logServer("headerLength = " + headerLength);
-                int oldContentLength = headerLength+responseTextBody.length();
-                MyLogger.logServer("oldContentLength = " + oldContentLength);
-
-                String updateBody = HttpResponse.modifyHtmlPaths(String.valueOf(responseTextBody),contentType,deviceId);
-                int newContentLength = headerLength+updateBody.length()+6;
-                MyLogger.logServer("headerLength = " + headerLength);
-                MyLogger.logServer("newContentLength = "+newContentLength);
-                //обновляем длину контента после изменения
-                responseHeaders.setContentLength(newContentLength);
-//                responseHeaders.set("Content-Length", String.valueOf(responseHeaders. +updateBody.length()));
-                // Возвращаем текстовый ответ с заголовками
-                return ResponseEntity.ok()
-                        .headers(responseHeaders)
-                        .body(updateBody.getBytes(StandardCharsets.UTF_8));
-//                        .body(responseTextBody.getBytes(StandardCharsets.UTF_8));
-
-            }
-            //  значит есть бинарные данные
-            else {
-                try {
-                    MyLogger.logServer("Возвращаем бинарный ответ от клиента, contentType: " + contentType, true);
-
-                    MediaType mediaType;
-                    try {
-                        mediaType = MediaType.valueOf(contentType);
-                    } catch (InvalidMediaTypeException e) {
-                        throw new IllegalArgumentException("Некорректный contentType: " + contentType, e);
-                    }
-
-
-                    Object body = null;
-                    //  здесь логика можно распаковать как бинарное так и текстовое сообщение
-                    // также проверить метод isGzipped все ли типы сжатых данных он обработает или только gzip сейчас
-                    if (myHttpUtils.isCompressed(responseHeaders))  {
-                        MyLogger.logServer("Данные сжаты, разжимаем...:\n");
-                        body = decompress(binaryResponse,responseHeaders);responseHeaders.remove("Content-Encoding"); // Убираем, так как уже разархивировали
-                        responseHeaders.remove("Transfer-Encoding");
-                    } else {
-                        body = binaryResponse;
-                    }
-                    if (body instanceof String){
-                        String updateBody = HttpResponse.modifyHtmlPaths(String.valueOf(body),contentType,deviceId);
-                        //был сжат текстовый тип контента
-                        byte[] textBytes = ((String) updateBody).getBytes(StandardCharsets.UTF_8);
-
-                        // Устанавливаем реальную длину после внесения изменений длины ссылок
-                        responseHeaders.setContentLength(responseHeaders.toString().getBytes().length+updateBody.length()+6);
-//                        responseHeaders.setContentLength(textBytes.length); // Устанавливаем реальную длину
-                        return ResponseEntity.ok()
-                                .headers(responseHeaders)
-                                .body(textBytes);
-                    } else {
-                        return ResponseEntity.ok()
-                                .headers(responseHeaders)
-                                .contentType(mediaType)
-                                .body((byte[]) body);
-                    }
-
-                } catch (Exception e) {
-                    MyLogger.logServer("Ошибка при формировании ответа: " + e.getMessage());
-                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error while processing binary response".getBytes(StandardCharsets.UTF_8));
-                }
-            }
-
-
-
-//            else {
-//                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Unexpected response type".getBytes(StandardCharsets.UTF_8));
-//            }
         } catch (Exception e) {
             e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(("Error occurred: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(("Error occurred: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
         }
     }
 
 
+
+//    @PostMapping(
+//            value = "p/{deviceId}/**",
+//            consumes = {
+//                    "multipart/form-data"
+//            }
+//    )
+//    public ResponseEntity<byte[]> proxyMultipartPostRequest(@PathVariable String deviceId,
+//                                                            MultipartHttpServletRequest request) {
+//        WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
+//        if (deviceSession == null || !deviceSession.isOpen()) {
+//            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
+//        }
+//
+//        try {
+//            // Формируем HTTP-запрос и получаем его вместе с requestId
+//            Map<String, String> httpRequestMap = httpRequest.buildHttpRequest(request, deviceId);
+//            // Извлекаем requestId и сам запрос из мапы
+//            String requestId = httpRequestMap.keySet().iterator().next();
+//            String httpRequest = httpRequestMap.get(requestId);
+//
+//            MyLogger.logServer("requestPath: [ " + httpRequest.split("\n")[0] + "]");
+//            MyLogger.logServer("httpRequest: [" + httpRequest + "]");
+//
+//            // Отправляем запрос устройству через WebSocket
+//            myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
+//
+//            // Получаем boundary из заголовка Content-Type
+//            String contentType = request.getContentType();
+//            String boundary = contentType.substring(contentType.indexOf("boundary=") + 9);
+//
+//            // Обрабатываем multipart-данные
+//            for (Map.Entry<String, MultipartFile> entry : request.getFileMap().entrySet()) {
+//                MultipartFile file = entry.getValue();
+//                String fileName = file.getOriginalFilename();
+//                MyLogger.logServer("Обрабатываем файл: " + fileName);
+//
+//                // Формируем multipart/form-data
+//                byte[] multipartData = HttpRequest.buildMultipartFormData(boundary, entry.getKey(), file);
+//
+//                // Отправляем данные через WebSocket
+//                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, multipartData, true, false);
+//            }
+//
+//            // Обрабатываем текстовые данные формы (если есть)
+//            Map<String, String[]> formData = request.getParameterMap();
+//            for (Map.Entry<String, String[]> entry : formData.entrySet()) {
+//                String key = entry.getKey();
+//                String[] values = entry.getValue();
+//                MyLogger.logServer("Текстовые данные формы: " + key + " = " + String.join(", ", values));
+//            }
+//
+//            // Вызываем метод для обработки ответа устройства
+//            return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId, deviceId, webSocketProxyHandler, myWebsocketUtils);
+//
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+//                    .body(("Error occurred: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
+//        }
+//    }
+
+
+
+//@PostMapping(
+//        value = "p/{deviceId}/**",
+//        consumes = {
+//                "multipart/form-data"
+//        }
+//)
+//public ResponseEntity<byte[]> proxyMultipartPostRequest(@PathVariable String deviceId,
+//                                                        MultipartHttpServletRequest request) {
+//    WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
+//    if (deviceSession == null || !deviceSession.isOpen()) {
+//        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
+//    }
+//
+//    try {
+//        // Формируем HTTP-запрос и получаем его вместе с requestId
+//        Map<String, String> httpRequestMap = httpRequest.buildHttpRequest(request, deviceId);
+//        // Извлекаем requestId и сам запрос из мапы
+//        String requestId = httpRequestMap.keySet().iterator().next();
+//        String httpRequest = httpRequestMap.get(requestId);
+//
+//        MyLogger.logServer("requestPath: [ " + httpRequest.split("\n")[0] + "]");
+//        MyLogger.logServer("httpRequest: [" + httpRequest + "]");
+//
+//        // Отправляем запрос устройству через WebSocket
+//        myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
+//
+//        // Обрабатываем multipart-данные
+//        for (Map.Entry<String, MultipartFile> entry : request.getFileMap().entrySet()) {
+//            MultipartFile file = entry.getValue();
+//            String fileName = file.getOriginalFilename();
+//            InputStream inputStream = file.getInputStream();
+//
+//            MyLogger.logServer("Обрабатываем файл: " + fileName);
+//
+//            // Читаем первые байты файла
+//            byte[] initialBuffer = new byte[WebSocketConfig.BUFFER_SIZE];
+//            int bytesRead = inputStream.read(initialBuffer);
+//
+//            if (bytesRead == -1) {
+//                MyLogger.logServer("Файл пустой: " + fileName, true);
+//                continue;
+//            }
+//
+//            boolean shouldCompress = myWebsocketUtils.shouldCompress(file.getContentType(), bytesRead, request.getRequestURI());
+//
+//            if (shouldCompress) {
+//                byte[] compressedData = MyWebsocketUtils.compressData(initialBuffer);
+//                MyLogger.logServer("Файл сжат (GZIP), размер: " + compressedData.length + " байт");
+//                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, compressedData, true, true);
+//
+//                // Если файл больше буфера, отправляем оставшиеся части
+//                if (bytesRead == WebSocketConfig.BUFFER_SIZE) {
+//                    myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, true);
+//                }
+//            } else {
+//                MyLogger.logServer("Файл отправляется потоком без сжатия");
+//                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, initialBuffer, false, false);
+//                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, false);
+//            }
+//
+//            inputStream.close();
+//        }
+//
+//        // Обрабатываем текстовые данные формы (если есть)
+//        Map<String, String[]> formData = request.getParameterMap();
+//        for (Map.Entry<String, String[]> entry : formData.entrySet()) {
+//            String key = entry.getKey();
+//            String[] values = entry.getValue();
+//            MyLogger.logServer("Текстовые данные формы: " + key + " = " + String.join(", ", values));
+//        }
+//
+//        // Вызываем метод для обработки ответа устройства
+//        return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId, deviceId, webSocketProxyHandler, myWebsocketUtils);
+//
+//    } catch (Exception e) {
+//        e.printStackTrace();
+//        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+//                .body(("Error occurred: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
+//    }
+//}
 
 }
 
