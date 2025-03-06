@@ -186,6 +186,7 @@ public class HttpResponse {
     public ResponseEntity<?> processDeviceResponse(String requestId, String deviceId, WebSocketProxyHandler webSocketProxyHandler, MyWebsocketUtils myWebsocketUtils) throws Exception {
         // Ждем ответ от устройства
         CompletableFuture<String> textResponseFuture = webSocketProxyHandler.waitForResponse(requestId);
+        //ассинхронно дожидаемся получения всех данных по отправленному с контроллера запроса
         String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
 
         // Извлекаем заголовки и тело текстового ответа
@@ -207,9 +208,12 @@ public class HttpResponse {
             MyLogger.logServer("возвращаем текстовый ответ от клиента");
 
             int headerLength = responseHeaders.toString().getBytes().length;
-            int oldContentLength = headerLength + responseTextBody.length();
             String updateBody = HttpResponse.modifyHtmlPaths(responseTextBody, contentType, deviceId);
-            int newContentLength = headerLength + updateBody.length() + 6;
+
+            //в кодировке UTF-8 некоторые символы (например, символы из других языков или специальные символы) могут занимать более одного байта.
+            byte[] bodyBytes = updateBody.getBytes(StandardCharsets.UTF_8);
+
+            int newContentLength = headerLength + bodyBytes.length;
 
             responseHeaders.setContentLength(newContentLength);
 
@@ -240,7 +244,7 @@ public class HttpResponse {
                 if (body instanceof String) {
                     String updateBody = HttpResponse.modifyHtmlPaths((String) body, contentType, deviceId);
                     byte[] textBytes = updateBody.getBytes(StandardCharsets.UTF_8);
-                    responseHeaders.setContentLength(responseHeaders.toString().getBytes().length + updateBody.length() + 6);
+                    responseHeaders.setContentLength(responseHeaders.toString().getBytes().length + textBytes.length);
 
                     return ResponseEntity.ok()
                             .headers(responseHeaders)
@@ -257,86 +261,6 @@ public class HttpResponse {
             }
         }
     }
-
-
-
-//
-//    public static String modifyHtmlPaths(String content, String contentType, String deviceId) {
-//        boolean isHtml = contentType.startsWith("text/html");
-//        boolean isCss = contentType.startsWith("text/css");
-//        boolean isJs = contentType.contains("javascript");
-//
-//
-//
-//        // Регулярные выражения для поиска путей
-//        String htmlRegex = "(href|src|background-image|action)\\s*=\\s*([\"']?)([^\"'\s>]+)\\2";
-//        String cssRegex = "url\\(\\s*['\"]?([^'\")]+)['\"]?\\s*\\)";
-//        String jsRegex = "['\"](/[^'\"\\s]+)['\"]";
-//        String jsVarRegex = "(const|let|var)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*=\\s*[\"'](/[^\"']+)[\"'];";
-//
-//
-//        if (!isHtml && !isCss && !isJs) {
-//            MyLogger.logServer("неизвестный тип контента");
-//            return content;
-//        }
-//        try {
-//        if (isHtml) {
-//            content = applyRegex(content, htmlRegex, "html", deviceId);
-//            content = applyRegex(content, cssRegex, "css", deviceId);
-//            content = applyRegex(content, jsVarRegex, "js-var", deviceId);
-//        } else if (isCss) {
-//            content = applyRegex(content, cssRegex, "css", deviceId);
-//        } else if (isJs) {
-//            content = applyRegex(content, jsRegex, "js", deviceId);
-//        }
-//
-//        return content;
-//        } catch (MyOtherExceptions e) {
-//            throw new MyOtherExceptions("Ошибка при применении регулярного выражения пути в modifyHtmlPaths: ", e);
-//        }
-//    }
-//
-//    private static String applyRegex(String content, String regex, String type, String deviceId) {
-//        Pattern pattern = Pattern.compile(regex);
-//        Matcher matcher = pattern.matcher(content);
-//        StringBuffer modifiedContent = new StringBuffer();
-//
-//        while (matcher.find()) {
-//            String path;
-//            String quote = matcher.group(2); // Получаем кавычку (" или '), если есть
-//
-//            if ("html".equals(type)) {
-//                path = matcher.group(3);
-//            } else if ("js-var".equals(type)) {
-//                path = matcher.group(3);
-//            } else {
-//                path = matcher.group(1);
-//            }
-//
-//            if (path.startsWith("/") && !path.startsWith("http://") && !path.startsWith("https://") && !path.startsWith("//")) {
-//                String newPath = "/p/" + deviceId + path;
-//                quote = (quote == null || quote.isEmpty()) ? "" : quote; // Если кавычки отсутствуют, не добавляем их
-//
-//                if ("html".equals(type)) {
-//                    matcher.appendReplacement(modifiedContent, matcher.group(1) + "=" + quote + newPath + quote);
-//                } else if ("css".equals(type)) {
-//                    matcher.appendReplacement(modifiedContent, "url(" + quote + newPath + quote + ")");
-//                } else if ("js".equals(type)) {
-//                    matcher.appendReplacement(modifiedContent, quote + newPath + quote);
-//                } else if ("js-var".equals(type)) {
-//                    matcher.appendReplacement(modifiedContent, matcher.group(1) + " " + matcher.group(2) + " = " + quote + newPath + quote + ";");
-//                }
-//            } else {
-//                matcher.appendReplacement(modifiedContent, matcher.group(0));
-//            }
-//        }
-//
-//        matcher.appendTail(modifiedContent);
-//        return modifiedContent.toString();
-//    }
-
-
-
 
 
 }

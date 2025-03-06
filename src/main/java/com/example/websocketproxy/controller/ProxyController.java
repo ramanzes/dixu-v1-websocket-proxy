@@ -26,6 +26,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static com.example.websocketproxy.services.MyWebsocketUtils.decompress;
+import static com.example.websocketproxy.services.MyWebsocketUtils.decompressData;
 
 
 @Controller
@@ -52,7 +53,6 @@ public class ProxyController {
 
 @RequestMapping(
         value = "/p/{deviceId}/**",
-//        method = {RequestMethod.GET, RequestMethod.POST}
         method = {RequestMethod.GET}
 )
 public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
@@ -75,45 +75,7 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
         // Отправляем запрос устройству через WebSocket
         myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
 
-        String method = request.getMethod();
 
-        // Потоковая передача тела POST-запроса
-        if ("POST".equalsIgnoreCase(method)) {
-            InputStream inputStream = request.getInputStream();
-            int initialBufferSize = WebSocketConfig.BUFFER_SIZE;
-
-            // Читаем первые байты, чтобы определить стратегию
-            byte[] initialBuffer = new byte[initialBufferSize];
-            // и сохраняем её в initialBuffer
-            int bytesRead = inputStream.read(initialBuffer);
-
-            if (bytesRead == -1) {
-                MyLogger.logServer("POST-запрос пустой", true);
-//                    return;
-            }
-            boolean shouldCompress = myWebsocketUtils.shouldCompress(request.getContentType(), bytesRead, request.getRequestURI());
-
-            byte[] requestBody;
-
-
-            if(bytesRead < 512){
-                MyLogger.logServer("Тело POST имеет маленький размер, отправляем сразу без сжатия в одном бинарном запросе, размер" + bytesRead + " байт");
-                // Отправляем только прочитанные данные
-                byte[] dataToSend = Arrays.copyOf(initialBuffer, bytesRead);
-                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, dataToSend, true, false);
-            } else if (shouldCompress) {
-                requestBody = MyWebsocketUtils.compressData(initialBuffer);
-                MyLogger.logServer("Тело POST сжато (GZIP), размер: " + requestBody.length + " байт");
-                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, requestBody, true, true);
-                // значит отправлено не всё и скорее всего остались в потоке ещё данные
-                if (bytesRead == WebSocketConfig.BUFFER_SIZE) {
-                    myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, true);
-                }
-            }
-
-            inputStream.close();
-
-        }
         // Вызываем новый метод для обработки ответа устройства
         return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,deviceId,webSocketProxyHandler,myWebsocketUtils);
 
@@ -151,9 +113,9 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
 
         MyLogger.logServer("requestPath: [ " + httpRequest.split("\n")[0] + "]");
         MyLogger.logServer("httpRequest: ["+httpRequest+"]");
-        // Отправляем запрос устройству через WebSocket
+        // Отправляем запрос устройству через WebSocket / этот запрос создаст хранилище в onMessage для получения тела post по этому idRequest
         myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
-
+        //инициируем переменную для приёма потока данных от клиента из его запроса, из тела post
         InputStream inputStream = request.getInputStream();
         int initialBufferSize = WebSocketConfig.BUFFER_SIZE;
 
@@ -164,6 +126,7 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
 
         if (bytesRead == -1) {
             MyLogger.logServer("POST-запрос пустой", true);
+            throw new MyLogger.CustomException("пустое тело запроса post");
 //                    return;
         }
         boolean shouldCompress = myWebsocketUtils.shouldCompress(request.getContentType(), bytesRead, request.getRequestURI());
@@ -177,20 +140,31 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
             myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, dataToSend, true, false);
         } else if (shouldCompress) {
             requestBody = MyWebsocketUtils.compressData(initialBuffer);
-            MyLogger.logServer("Тело POST сжато (GZIP), размер: " + requestBody.length + " байт");
-            myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, requestBody, true, true);
+            int compressDataLength = requestBody.length;
+            MyLogger.logServer("Тело POST, размер до сжатия: " + bytesRead + " байт");
+            MyLogger.logServer("Тело POST сжато (GZIP), размер после: " + compressDataLength + " байт");
+//            MyLogger.logServByteToString(initialBuffer);
             // значит отправлено не всё и скорее всего остались в потоке ещё данные
             if (bytesRead == WebSocketConfig.BUFFER_SIZE) {
-                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, true);
+                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, requestBody, false, true);
+                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, true, compressDataLength);
+            } else if (bytesRead < WebSocketConfig.BUFFER_SIZE){
+                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, requestBody, true, true);
             }
         } else{
             //это могут быть большие данные уже сжатые или не требующие сжатия по тем или иным причинам
             MyLogger.logServer("Тело POST отправляется потоком без сжатия");
-            //отправляем уже считанную часть в самом начале
-            myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, initialBuffer, false, false);
-            // отправляем остальные части т.е. из inputStream уже считана первая часть продолжим от туда
-            myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream,false);
-            // Вызываем новый метод для обработки ответа устройства
+
+            if (bytesRead < WebSocketConfig.BUFFER_SIZE) {
+                //отправляем уже считанную часть в самом начале
+                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, initialBuffer, true, false);
+            } else if (bytesRead == WebSocketConfig.BUFFER_SIZE) {
+                //отправляем уже считанную часть в самом начале
+                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, initialBuffer, false, false);
+                // отправляем остальные части т.е. из inputStream уже считана первая часть продолжим от туда
+                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, false, bytesRead);
+                // Вызываем новый метод для обработки ответа устройства
+            }
         }
 
         inputStream.close();

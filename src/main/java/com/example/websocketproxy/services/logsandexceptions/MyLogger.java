@@ -2,8 +2,16 @@ package com.example.websocketproxy.services.logsandexceptions;
 
 import com.example.websocketproxy.config.WebSocketConfig;
 
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static com.example.websocketproxy.services.MyWebsocketUtils.decompressData;
 
 //import lombok.extern.slf4j.Slf4j;
 //@Slf4j
@@ -69,6 +77,50 @@ public class MyLogger {
         System.out.println("websocket-server Logs(" + getTimeNow() + "): " + result);
     }
 
+    public static void logServByteToString(byte[] data) throws UnsupportedEncodingException {
+        logServer("--------------------S-------------------------------",true);
+        // Преобразуем байты в строку
+        String decodedString = new String(data, StandardCharsets.UTF_8);
+        //Метод возвращает строку, которая содержит только валидные данные для декодирования. т.к. мы нарезаем данные частями. то для логирования обрезка малой части невалидных данных не принципиальна
+        String cleanedString = extractValidUrlEncodedData(decodedString);
+        String result = URLDecoder.decode(cleanedString, "UTF-8");
+        MyLogger.logServer(result,true);
+        logServer("--------------------E-------------------------------",true);
+    }
+
+    public static void logSrvDecodeUnGzip(byte[] data) throws IOException {
+        // Распаковываем данные
+        byte[] decompressedData = decompressData(data);
+        logServByteToString(decompressedData);
+    }
+
+    /**
+     * Возвращает строку с валидными URL-encoded последовательностями.
+     * Удаляет все неполные или некорректные последовательности.
+     *
+     * @param input Исходная строка
+     * @return Строка с валидными данными для декодирования
+     */
+    public static String extractValidUrlEncodedData(String input) {
+        if (input == null || input.isEmpty()) {
+            return "";
+        }
+
+        // Регулярное выражение для поиска валидных %XX последовательностей
+        Pattern pattern = Pattern.compile("((?:%[0-9A-Fa-f]{2})+)|([^%]+)");
+        Matcher matcher = pattern.matcher(input);
+
+        StringBuilder result = new StringBuilder();
+
+        while (matcher.find()) {
+            // Если найдена валидная %XX последовательность или обычный текст
+            if (matcher.group(1) != null || matcher.group(2) != null) {
+                result.append(matcher.group());
+            }
+        }
+
+        return result.toString();
+    }
 
     public static class CustomException extends Exception {
         private String errorCode;

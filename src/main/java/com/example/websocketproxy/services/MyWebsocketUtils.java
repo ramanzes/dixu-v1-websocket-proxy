@@ -10,6 +10,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import java.util.zip.InflaterInputStream;
@@ -87,30 +89,54 @@ public class MyWebsocketUtils {
             }
         }
 
-    // Метод для сжатия данных GZIP (возвращает сжатые данные)
-    public static byte[] compressData(InputStream inputStream) throws IOException {
-        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-        GZIPOutputStream gzipOutputStream = new GZIPOutputStream(byteArrayOutputStream);
-        byte[] buffer = new byte[4096];
-        int bytesRead;
-        while ((bytesRead = inputStream.read(buffer)) != -1) {
-            gzipOutputStream.write(buffer, 0, bytesRead);
+    /**
+     * Метод для распаковки сжатых данных.
+     */
+    public static byte[] decompressData(byte[] compressedData) throws IOException {
+        try (ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(compressedData);
+             GZIPInputStream gzipInputStream = new GZIPInputStream(byteArrayInputStream);
+             ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream()) {
+
+            // Читаем распакованные данные блоками и записываем их в выходной поток
+            byte[] buffer = new byte[1024];
+            int length;
+            while ((length = gzipInputStream.read(buffer)) > 0) {
+                byteArrayOutputStream.write(buffer, 0, length);
+            }
+
+            // Возвращаем распакованные данные как массив байтов
+            return byteArrayOutputStream.toByteArray();
         }
-        gzipOutputStream.finish();
-        gzipOutputStream.close();
-        return byteArrayOutputStream.toByteArray();
     }
 
+
+//    // Метод для сжатия данных GZIP (возвращает сжатые данные)
+//    public static byte[] compressData(InputStream inputStream) throws IOException {
+//        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+//        GZIPOutputStream gzipOutputStream = new GZIPOutputStream(byteArrayOutputStream);
+//        byte[] buffer = new byte[4096];
+//        int bytesRead;
+//        while ((bytesRead = inputStream.read(buffer)) != -1) {
+//            gzipOutputStream.write(buffer, 0, bytesRead);
+//        }
+//        gzipOutputStream.finish();
+//        gzipOutputStream.close();
+//        return byteArrayOutputStream.toByteArray();
+//    }
+
     //отправка потока частями, с сжатием isGzip=True или без isGzip=False
-    public static void sendChunkInputStream(WebSocketSession deviceSession, String requestId, InputStream inputStream, boolean isGzip) throws Exception {
+    public static void sendChunkInputStream(WebSocketSession deviceSession, String requestId, InputStream inputStream, boolean isGzip, int poss) throws Exception {
         int initialBufferSize = WebSocketConfig.BUFFER_SIZE;
-        // Читаем первые байты, чтобы определить стратегию
         byte[] buffer = new byte[initialBufferSize];
         int bytesRead=0;
         boolean isLast = false;
         while ((bytesRead = inputStream.read(buffer)) != -1) {
+            byte[] thisBuff = Arrays.copyOfRange(buffer, poss, bytesRead);
+//            byte[] thisBuff = Arrays.copyOf(buffer, bytesRead);
+            poss = 0;
+//            MyLogger.logServByteToString(thisBuff);
             // если передаём параметр сжатия, сжимаем данные, иначе нет
-            byte[] chunk = isGzip ? compressData(Arrays.copyOf(buffer, bytesRead)) : Arrays.copyOf(buffer, bytesRead);
+            byte[] chunk = isGzip ? compressData(thisBuff) : thisBuff;
             isLast = (bytesRead < buffer.length); // Последняя часть, если прочитано меньше буфера
             sendBinaryMessage(deviceSession, requestId, chunk, isLast, isGzip);
             MyLogger.logServer("Sent " + chunk.length + " bytes for requestId: " + requestId + ", isLast: " + isLast + " isGzip=" + isGzip, true);
@@ -142,9 +168,19 @@ public class MyWebsocketUtils {
             // Добавляем сам фрагмент
             messageStream.write(data);
 
-            MyLogger.logServer("Data to send: " + new String(data, StandardCharsets.UTF_8));
+
+
+
+
+            MyLogger.logServer("only Data to send: " + data.length+" isGzip="+isGzip);
+            if (!isGzip) MyLogger.logSrvDecodeUnGzip(data);
+            else MyLogger.logSrvDecodeUnGzip(data);
+
+
 
             byte[] messageBytes = messageStream.toByteArray();
+
+           MyLogger.logServer("Длина сообщения вместе флагом и idRequest:"+messageStream.size());
             // Отправляем фрагмент через WebSocket
             session.sendMessage(new BinaryMessage(messageBytes, isLast));
         }
@@ -194,6 +230,7 @@ public void sendMultipartFormDataStream(WebSocketSession deviceSession, String r
 
 
 
+
 //    // При отправке текстовых данных
 //    byte[] compressedData = compress(requestBody.getBytes(StandardCharsets.UTF_8));
 //    sendBinaryMessage(deviceSession, requestId, compressedData);
@@ -230,11 +267,12 @@ public void sendMultipartFormDataStream(WebSocketSession deviceSession, String r
     }
 
 
-    public static Object returnDecompressData(ByteArrayOutputStream outStream, HttpHeaders headers){
+    public static Object returnDecompressData(ByteArrayOutputStream outStream, boolean isText){
         byte[] decompressedData = outStream.toByteArray();
-        String contentType = headers.getFirst(HttpHeaders.CONTENT_TYPE);
+//        String contentType = headers.getFirst(HttpHeaders.CONTENT_TYPE);
         // Если это текст, преобразуем в строку
-        if (contentType != null && HttpResponse.isTextResponse(contentType)) {
+//        if (contentType != null && HttpResponse.isTextResponse(contentType)) {
+        if (isText) {
             return new String(decompressedData, StandardCharsets.UTF_8);
         }
         return (byte []) decompressedData; // Оставляем бинарные данные
@@ -251,7 +289,10 @@ public void sendMultipartFormDataStream(WebSocketSession deviceSession, String r
                 outStream.write(buffer, 0, len);
             }
 
-            return returnDecompressData(outStream,headers);
+
+            String contentType = headers.getFirst(HttpHeaders.CONTENT_TYPE);
+
+            return returnDecompressData(outStream, HttpResponse.isTextResponse(contentType));
 
         } catch (Exception e) {
             throw new RuntimeException("Ошибка при разжатии GZIP", e);
@@ -269,7 +310,9 @@ public void sendMultipartFormDataStream(WebSocketSession deviceSession, String r
                 outStream.write(buffer, 0, len);
             }
 
-            return returnDecompressData(outStream,headers);
+            String contentType = headers.getFirst(HttpHeaders.CONTENT_TYPE);
+
+            return returnDecompressData(outStream, HttpResponse.isTextResponse(contentType));
 //            return outStream.toByteArray();
         } catch (Exception e) {
             throw new RuntimeException("Ошибка при разжатии Deflate", e);
