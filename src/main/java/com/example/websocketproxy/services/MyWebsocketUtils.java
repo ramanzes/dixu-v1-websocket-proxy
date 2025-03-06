@@ -134,10 +134,10 @@ public class MyWebsocketUtils {
             byte[] thisBuff = Arrays.copyOfRange(buffer, poss, bytesRead);
 //            byte[] thisBuff = Arrays.copyOf(buffer, bytesRead);
             poss = 0;
-//            MyLogger.logServByteToString(thisBuff);
+            MyLogger.logServByteToString(thisBuff);
             // если передаём параметр сжатия, сжимаем данные, иначе нет
             byte[] chunk = isGzip ? compressData(thisBuff) : thisBuff;
-            isLast = (bytesRead < buffer.length); // Последняя часть, если прочитано меньше буфера
+//            isLast = (bytesRead < buffer.length); // Последняя часть, если прочитано меньше буфера
             sendBinaryMessage(deviceSession, requestId, chunk, isLast, isGzip);
             MyLogger.logServer("Sent " + chunk.length + " bytes for requestId: " + requestId + ", isLast: " + isLast + " isGzip=" + isGzip, true);
         }
@@ -173,9 +173,10 @@ public class MyWebsocketUtils {
 
 
             MyLogger.logServer("only Data to send: " + data.length+" isGzip="+isGzip);
-            if (!isGzip) MyLogger.logSrvDecodeUnGzip(data);
-            else MyLogger.logSrvDecodeUnGzip(data);
-
+            if (!isLast) {
+                if (!isGzip) MyLogger.logServByteToString(data);
+                else MyLogger.logSrvDecodeUnGzip(data);
+            }
 
 
             byte[] messageBytes = messageStream.toByteArray();
