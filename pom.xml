@@ -81,6 +81,11 @@
 			<artifactId>commons-fileupload</artifactId>
 			<version>1.4</version>
 		</dependency>
+		<dependency>
+			<groupId>com.github.luben</groupId>
+			<artifactId>zstd-jni</artifactId>
+			<version>1.5.5-11</version> <!-- Проверьте актуальную версию на GitHub -->
+		</dependency>
 <!--		<dependency>-->
 <!--			<groupId>org.brotli</groupId>-->
 <!--			<artifactId>brotli</artifactId>-->

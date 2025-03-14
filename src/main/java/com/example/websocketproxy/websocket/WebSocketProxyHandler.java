@@ -3,6 +3,7 @@ package com.example.websocketproxy.websocket;
 import com.example.websocketproxy.services.DeviceSessionManager;
 import com.example.websocketproxy.services.logsandexceptions.MyLogger;
 import com.example.websocketproxy.services.logsandexceptions.exceptions.DeviceWithThisIdIsInActiveSessionNow;
+import com.example.websocketproxy.services.logsandexceptions.exceptions.MyOtherExceptions;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import org.springframework.stereotype.Component;
@@ -92,7 +93,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
 
         String payload = message.getPayload();
 
-        MyLogger.logServer(payload.substring(0,25)+"...",true);
+        MyLogger.logServer(payload.substring(0,49)+"...",true);
         try {
             // Парсим JSON
             JsonObject json = new Gson().fromJson(payload, JsonObject.class);
@@ -116,7 +117,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
                 textMessageBuffers.remove(requestId); // Удаляем буфер для requestId
 
 //                MyLogger.logServer(fullMessage,true);
-
+                MyLogger.logServer("Full response for requestId " + requestId + ": " + fullMessage);
 //                // Если сообщение слишком большое, возможно, нужно добавить дополнительную обработку
 //                if (fullMessage.length() > MAX_MESSAGE_SIZE) {
 //                    MyLogger.logServer("Сообщение для requestId: " + requestId + " слишком большое, обрабатываем по частям.");
@@ -148,6 +149,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
                     handleResponse(requestId, fullMessage);
                 } else {
                     MyLogger.logServer("[нет вначале HTTP/1.1] Full message for requestId: " + requestId,true);
+                    throw new MyOtherExceptions("нет заголовка HTTP/1.1 у текстового типа данных");
                 }
             }
         } catch (Exception e) {
@@ -161,68 +163,140 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
     }
 
 
+
+    private final Map<String, Object> bufferLocks = new ConcurrentHashMap<>();
+
+    private Object getBufferLock(String requestId) {
+        return bufferLocks.computeIfAbsent(requestId, k -> new Object());
+    }
+
+
+
     //приём всех частей сообщения бинарного ответа
+
+//    @Override
+//    public void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
+//        String deviceId = deviceSessionManager.getDeviceIdFromSession(session);
+//        if (deviceId == null) {
+//            MyLogger.logServer("Received message from unidentified session",true);
+//            return;
+//        }
+//        MyLogger.logServer("Начинаем приём бинарных сообщений от устройства [" + deviceId + "]",true);
+//
+//        ByteBuffer payload = message.getPayload();
+//        payload.rewind();
+//
+//        try {// Извлекаем длину requestId
+////            int requestIdLength = deviceId.length()+1+36+Integer.BYTES; //1+uuid
+//            // Читаем длину requestId
+//            int requestIdLength = payload.getInt(); // Извлекаем 4 байта длины requestId
+//
+//            byte[] requestIdBytes = new byte[requestIdLength];
+//            payload.get(requestIdBytes);
+//            String requestId = new String(requestIdBytes, StandardCharsets.UTF_8);
+//
+//            MyLogger.logServer(requestId,true);
+//            // Остальные данные
+//            byte[] data = new byte[payload.remaining()];
+//            payload.get(data);
+//
+//
+//
+//
+//            // Синхронизация на уровне requestId
+//            synchronized (getBufferLock(requestId)) {
+//                ByteArrayOutputStream buffer = byteMessageBuffers.computeIfAbsent(requestId, k -> new ByteArrayOutputStream());
+//                buffer.write(data);
+//
+//                if (message.isLast()) {
+//                    byte[] fullMessageBytes = buffer.toByteArray();
+//                    byteMessageBuffers.remove(requestId);
+//                    bufferLocks.remove(requestId); // Удаляем монитор
+//                    handleBinaryResponse(requestId, fullMessageBytes);
+//                }
+//            }
+//
+//
+////
+////            // Сохраняем фрагменты в буфер для каждого requestId
+////            ByteArrayOutputStream buffer = byteMessageBuffers.computeIfAbsent(requestId, k -> new ByteArrayOutputStream());
+////            buffer.write(data);
+////
+////            // Если это последний фрагмент, обрабатываем сообщение
+////            if (message.isLast()) {
+////                byte[] fullMessageBytes = buffer.toByteArray();
+//////                buffer.reset(); // Очищаем буфер
+////                byteMessageBuffers.remove(requestId); // Удаляем буфер для requestId
+////
+////                handleBinaryResponse(requestId, fullMessageBytes);
+////            }
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//        }
+//    }
+
+    private String extractRequestId(ByteBuffer payload) {
+        int requestIdLength = payload.getInt(); // Извлекаем 4 байта длины requestId
+        byte[] requestIdBytes = new byte[requestIdLength];
+        payload.get(requestIdBytes);
+        return new String(requestIdBytes, StandardCharsets.UTF_8);
+    }
+
+    private byte[] extractData(ByteBuffer payload) {
+        byte[] data = new byte[payload.remaining()];
+        payload.get(data);
+        return data;
+    }
 
     @Override
     public void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
-        String deviceId = deviceSessionManager.getDeviceIdFromSession(session);
-        if (deviceId == null) {
-            MyLogger.logServer("Received message from unidentified session",true);
-            return;
-        }
-        MyLogger.logServer("Начинаем приём бинарных сообщений от устройства [" + deviceId + "]",true);
-
-        ByteBuffer payload = message.getPayload();
-        payload.rewind();
-
-        try {// Извлекаем длину requestId
-//            int requestIdLength = deviceId.length()+1+36+Integer.BYTES; //1+uuid
-            // Читаем длину requestId
-            int requestIdLength = payload.getInt(); // Извлекаем 4 байта длины requestId
-
-            byte[] requestIdBytes = new byte[requestIdLength];
-            payload.get(requestIdBytes);
-            String requestId = new String(requestIdBytes, StandardCharsets.UTF_8);
-
-            MyLogger.logServer(requestId,true);
-            // Остальные данные
-            byte[] data = new byte[payload.remaining()];
-            payload.get(data);
-
-
-
-
-            // Сохраняем фрагменты в буфер для каждого requestId
-            ByteArrayOutputStream buffer = byteMessageBuffers.computeIfAbsent(requestId, k -> new ByteArrayOutputStream());
-            buffer.write(data);
-
-            // Если это последний фрагмент, обрабатываем сообщение
-            if (message.isLast()) {
-                byte[] fullMessageBytes = buffer.toByteArray();
-//                buffer.reset(); // Очищаем буфер
-                byteMessageBuffers.remove(requestId); // Удаляем буфер для requestId
-
-//                // Определяем contentType (если доступен)
-//                String contentType = RequestData.getContentTypeFromRequestId(requestId);
-//                if (contentType == null) {
-//                    handleBinaryResponse(requestId, fullMessageBytes, "application/octet-stream");
-//
-//                } else {
-////                    MyLogger.logServer("Получены данные для запроса [" + requestId + "]: " + Base64.getEncoder().encodeToString(fullMessageBytes));
-//                    // Вычисление хэша отправляемых данных
-//                    String dataHash = calculateHash(fullMessageBytes);
-//                    MyLogger.logServer("Хэш данных для запроса [" + requestId + "]: " + dataHash,true);
-//
-//                    handleBinaryResponse(requestId, fullMessageBytes, contentType);
-//                    RequestData.removeContentTypeRequestId(requestId);
-//                }
-
-                    handleBinaryResponse(requestId, fullMessageBytes);
+        //Синхронизация на уровне сессии (session) гарантирует, что все операции, связанные с одной сессией, выполняются последовательно.
+        synchronized (session) {
+            String deviceId = deviceSessionManager.getDeviceIdFromSession(session);
+            if (deviceId == null) {
+                MyLogger.logServer("Received message from unidentified session", true);
+                return;
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+            MyLogger.logServer("Начинаем приём бинарных сообщений от устройства [" + deviceId + "]", true);
+
+            ByteBuffer payload = message.getPayload();
+            payload.rewind();
+
+            try {
+                // Извлекаем requestId и данные
+                String requestId = extractRequestId(payload);
+                byte[] data = extractData(payload);
+
+                MyLogger.logServer(requestId, true);
+
+                // Синхронизация на уровне requestId гарантирует, что данные для одного requestId обрабатываются последовательно.
+                synchronized (getBufferLock(requestId)) {
+                    // Получаем или создаем буфер
+                    ByteArrayOutputStream buffer = byteMessageBuffers.get(requestId);
+                    if (buffer == null) {
+                        buffer = new ByteArrayOutputStream();
+                        byteMessageBuffers.put(requestId, buffer);
+                    }
+
+                    // Записываем данные в буфер
+                    buffer.write(data);
+
+                    // Если это последний фрагмент, обрабатываем сообщение
+                    if (message.isLast()) {
+                        byte[] fullMessageBytes = buffer.toByteArray();
+                        byteMessageBuffers.remove(requestId);
+                        bufferLocks.remove(requestId); // Удаляем монитор
+                        MyLogger.logServer("Full binary response for requestId " + requestId + ", length: " + fullMessageBytes.length);
+                        handleBinaryResponse(requestId, fullMessageBytes);
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
     }
+
+
 
 
 

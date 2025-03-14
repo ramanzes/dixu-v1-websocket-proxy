@@ -3,6 +3,7 @@ package com.example.websocketproxy.services;
 import com.example.websocketproxy.config.WebSocketConfig;
 import com.example.websocketproxy.services.logsandexceptions.MyLogger;
 import com.example.websocketproxy.services.logsandexceptions.exceptions.NowItIsNotExistExceptions;
+import com.github.luben.zstd.ZstdInputStream;
 import org.springframework.http.HttpHeaders;
 
 import java.io.*;
@@ -10,8 +11,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import java.util.zip.InflaterInputStream;
@@ -34,13 +37,23 @@ public class MyWebsocketUtils {
         MyLogger.logServer(headers, true);
         return headers;
     }
-
+//
     public static boolean isCompressed(HttpHeaders headers) {
         String encoding = headers.getFirst("Content-Encoding");
         if (encoding == null) return false;
         encoding = encoding.toLowerCase();
+
+
         return encoding.contains("gzip") || encoding.contains("deflate") ||
-                encoding.contains("br") || encoding.contains("compress");
+                encoding.contains("br") || encoding.contains("compress") || encoding.contains("zstd");
+    }
+
+    public static Map<String, String> convertHttpHeadersToMap(HttpHeaders headers) {
+        return headers.entrySet().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey, // Ключ (имя заголовка)
+                        entry -> String.join(", ", entry.getValue()) // Значение (список значений заголовка объединяем в строку)
+                ));
     }
 
 
@@ -110,20 +123,6 @@ public class MyWebsocketUtils {
     }
 
 
-//    // Метод для сжатия данных GZIP (возвращает сжатые данные)
-//    public static byte[] compressData(InputStream inputStream) throws IOException {
-//        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-//        GZIPOutputStream gzipOutputStream = new GZIPOutputStream(byteArrayOutputStream);
-//        byte[] buffer = new byte[4096];
-//        int bytesRead;
-//        while ((bytesRead = inputStream.read(buffer)) != -1) {
-//            gzipOutputStream.write(buffer, 0, bytesRead);
-//        }
-//        gzipOutputStream.finish();
-//        gzipOutputStream.close();
-//        return byteArrayOutputStream.toByteArray();
-//    }
-
     //отправка потока частями, с сжатием isGzip=True или без isGzip=False
     public static void sendChunkInputStream(WebSocketSession deviceSession, String requestId, InputStream inputStream, boolean isGzip, int poss) throws Exception {
         int initialBufferSize = WebSocketConfig.BUFFER_SIZE;
@@ -145,19 +144,21 @@ public class MyWebsocketUtils {
         if (!isLast) {
             // Если не было отправлено сообщение с isLast = true, отправляем пустое
             sendBinaryMessage(deviceSession, requestId, new byte[0], true, isGzip);
-        }
+    }
     }
 
-    public void sendMessage(WebSocketSession session, TextMessage message) throws IOException {
+    public synchronized void sendMessage(WebSocketSession session, TextMessage message) throws IOException {
 //        synchronized (sendLock) {
-        synchronized (session) {
+//        synchronized (session)
+        if (session.isOpen()){
             session.sendMessage(message);
         }
     }
 
     // Отправка бинарного сообщения через WebSocket. первые байты, флаг сжатия и requestId которые мы получим на стороне клиента всегда в не сжатом виде.
-    public static void sendBinaryMessage(WebSocketSession session, String requestId, byte[] data, boolean isLast, boolean isGzip) throws Exception {
-        synchronized (session) {
+    public synchronized static void sendBinaryMessage(WebSocketSession session, String requestId, byte[] data, boolean isLast, boolean isGzip) throws Exception {
+//        synchronized (session) {
+        if (session.isOpen()){
             // Создаем буфер для метаданных + данные
             ByteArrayOutputStream messageStream = new ByteArrayOutputStream();
             // Добавляем флаг сжатия
@@ -189,7 +190,7 @@ public class MyWebsocketUtils {
 
 
 //Метод для потоковой отправки multipart/form-data
-public void sendMultipartFormDataStream(WebSocketSession deviceSession, String requestId, String boundary, String fieldName, MultipartFile file) throws Exception {
+public  void sendMultipartFormDataStream(WebSocketSession deviceSession, String requestId, String boundary, String fieldName, MultipartFile file) throws Exception {
         InputStream inputStream = file.getInputStream();
         byte[] buffer = new byte[WebSocketConfig.BUFFER_SIZE];
         int bytesRead;
@@ -252,6 +253,8 @@ public void sendMultipartFormDataStream(WebSocketSession deviceSession, String r
             return decompressBrotli(compressedData, headers);
         } else if (encoding.contains("compress")) {
             return decompressCompress(compressedData, headers);
+        } else if (encoding.contains("zstd")){
+            return decompressZstd(compressedData,headers);
         }
         return compressedData; // Если неизвестный формат — вернуть как есть
     }
@@ -299,6 +302,28 @@ public void sendMultipartFormDataStream(WebSocketSession deviceSession, String r
             throw new RuntimeException("Ошибка при разжатии GZIP", e);
         }
     }
+
+
+    public static Object decompressZstd(byte[] compressedData, HttpHeaders headers) {
+        try (ByteArrayInputStream byteStream = new ByteArrayInputStream(compressedData);
+             ZstdInputStream zstdStream = new ZstdInputStream(byteStream);
+             ByteArrayOutputStream outStream = new ByteArrayOutputStream()) {
+
+            byte[] buffer = new byte[1024];
+            int len;
+            while ((len = zstdStream.read(buffer)) != -1) {
+                outStream.write(buffer, 0, len);
+            }
+
+            String contentType = headers.getFirst(HttpHeaders.CONTENT_TYPE);
+            return returnDecompressData(outStream, HttpResponse.isTextResponse(contentType));
+
+        } catch (IOException e) {
+            throw new RuntimeException("Ошибка при разжатии Zstandard (zstd)", e);
+        }
+    }
+
+
 
     public static Object decompressDeflate(byte[] compressedData, HttpHeaders headers) {
         try (ByteArrayInputStream byteStream = new ByteArrayInputStream(compressedData);

@@ -18,7 +18,7 @@ import static com.example.websocketproxy.services.MyWebsocketUtils.decompress;
 public class HttpResponse {
 
 
-
+//перенести в HttpUtils
     // Метод для извлечения заголовков
     public static HttpHeaders extractHeaders(String textResponse) {
         HttpHeaders headers = new HttpHeaders();
@@ -42,6 +42,7 @@ public class HttpResponse {
         return headers;
     }
 
+    //перенести в HttpUtils
 // метод, который извлекает код ответа из заголовков
     public static int extractStatusCode(String textResponse) {
         if (textResponse.contains("\r\n")) {
@@ -187,7 +188,9 @@ public class HttpResponse {
         // Ждем ответ от устройства
         CompletableFuture<String> textResponseFuture = webSocketProxyHandler.waitForResponse(requestId);
         //ассинхронно дожидаемся получения всех данных по отправленному с контроллера запроса
-        String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
+
+        String textResponse = textResponseFuture.get(20, TimeUnit.SECONDS);
+//        String textResponse = textResponseFuture.get();
 
         // Извлекаем заголовки и тело текстового ответа
         HttpHeaders responseHeaders = HttpResponse.extractHeaders(textResponse);
@@ -196,11 +199,15 @@ public class HttpResponse {
         int statusCode = HttpResponse.extractStatusCode(textResponse);
 
         byte[] binaryResponse = null;
-        if (responseTextBody.length() == 0 && statusCode != 304 && statusCode != 204 && statusCode != 205) {
+
+//        if (responseTextBody.length() == 0 && statusCode != 304 && statusCode != 204 && statusCode != 205) {
+        if (responseTextBody.length() == 0) {
             MyLogger.logServer("Ответ содержит только заголовки." + " значит ждём и бинарные данные");
             // Получаем бинарные данные для того же запроса
             CompletableFuture<byte[]> binaryResponseFuture = webSocketProxyHandler.waitForBinaryResponse(requestId);
-            binaryResponse = binaryResponseFuture.get(120, TimeUnit.SECONDS);
+            binaryResponse = binaryResponseFuture.get(20, TimeUnit.SECONDS);
+
+//            binaryResponse = binaryResponseFuture.get();
         }
 
         if (binaryResponse == null) {
@@ -215,7 +222,11 @@ public class HttpResponse {
 
             int newContentLength = headerLength + bodyBytes.length;
 
+//            int newContentLength = bodyBytes.length;
+
             responseHeaders.setContentLength(newContentLength);
+//            responseHeaders.remove("Content-Length");
+//            responseHeaders.set("Transfer-Encoding", "chunked");
 
             return ResponseEntity.ok()
                     .headers(responseHeaders)
@@ -235,6 +246,7 @@ public class HttpResponse {
                 if (myWebsocketUtils.isCompressed(responseHeaders)) {
                     MyLogger.logServer("Данные сжаты, разжимаем...:\n");
                     body = decompress(binaryResponse, responseHeaders);
+//после распаковки убираем в заголовках отметки о том что контент сжат
                     responseHeaders.remove("Content-Encoding");
                     responseHeaders.remove("Transfer-Encoding");
                 } else {
@@ -244,7 +256,13 @@ public class HttpResponse {
                 if (body instanceof String) {
                     String updateBody = HttpResponse.modifyHtmlPaths((String) body, contentType, deviceId);
                     byte[] textBytes = updateBody.getBytes(StandardCharsets.UTF_8);
-                    responseHeaders.setContentLength(responseHeaders.toString().getBytes().length + textBytes.length);
+
+                    //после распаковки длина контента работает только без учёта заголовков
+                    responseHeaders.setContentLength(textBytes.length);
+                    long  contentLength = (long)(HttpUtils.getHeadersSize(responseHeaders) + textBytes.length);
+//                    responseHeaders.setContentLength(contentLength);
+                    MyLogger.logServer("размер после распаковки без заголовков Content-Length "+String.valueOf(textBytes.length));
+                    MyLogger.logServer("размер после распаковки с заголовками Content-Length "+contentLength);
 
                     return ResponseEntity.ok()
                             .headers(responseHeaders)

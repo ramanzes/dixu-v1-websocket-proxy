@@ -1,11 +1,9 @@
 package com.example.websocketproxy.controller;
 
 import com.example.websocketproxy.config.WebSocketConfig;
+import com.example.websocketproxy.services.*;
 import com.example.websocketproxy.services.HttpRequest;
-import com.example.websocketproxy.services.HttpResponse;
-import com.example.websocketproxy.services.MyWebsocketUtils;
 import com.example.websocketproxy.websocket.WebSocketProxyHandler;
-import com.example.websocketproxy.services.DeviceSessionManager;
 import com.example.websocketproxy.services.logsandexceptions.MyLogger;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.*;
@@ -19,17 +17,14 @@ import org.springframework.web.socket.WebSocketSession;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 
-import static com.example.websocketproxy.services.MyWebsocketUtils.decompress;
-import static com.example.websocketproxy.services.MyWebsocketUtils.decompressData;
+import java.util.Map;
 
 
 @Controller
+@RequestMapping(
+        value = "/p"
+)
 public class ProxyController {
 
     private final DeviceSessionManager deviceSessionManager;
@@ -37,22 +32,23 @@ public class ProxyController {
     private final MyWebsocketUtils myWebsocketUtils;
     private final HttpRequest httpRequest;
     private final HttpResponse httpResponse;
+    private final HttpUtils httpUtils;
 //    private WebSocketSession deviceSession;
 
 
-    public ProxyController(DeviceSessionManager deviceSessionManager, WebSocketProxyHandler webSocketProxyHandler, MyWebsocketUtils myWebsocketUtils, HttpRequest httpRequest, HttpResponse httpResponse) {
+    public ProxyController(DeviceSessionManager deviceSessionManager, WebSocketProxyHandler webSocketProxyHandler, MyWebsocketUtils myWebsocketUtils, HttpRequest httpRequest, HttpResponse httpResponse, HttpUtils httpUtils) {
         this.deviceSessionManager = deviceSessionManager;
         this.webSocketProxyHandler = webSocketProxyHandler;
         this.myWebsocketUtils = myWebsocketUtils;
         this.httpRequest = httpRequest;
         this.httpResponse = httpResponse;
+        this.httpUtils = httpUtils;
     }
 
 
 
-
 @RequestMapping(
-        value = "/p/{deviceId}/**",
+        value = "/{deviceId}/**",
         method = {RequestMethod.GET}
 )
 public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
@@ -76,7 +72,7 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
         myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
 
 
-        // Вызываем новый метод для обработки ответа устройства
+        // Вызываем метод для обработки ответа устройства
         return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,deviceId,webSocketProxyHandler,myWebsocketUtils);
 
     } catch (Exception e) {
@@ -87,7 +83,7 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
 
 //обработка POST запросов для типа контента без multipart
 @PostMapping(
-        value = "/p/{deviceId}/**",
+        value = "/{deviceId}/**",
         consumes = {
             "application/json",
             "application/xml",
@@ -182,7 +178,7 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
 //контроллер обрабатывает Post запросы multipart
 
     @PostMapping(
-            value = "p/{deviceId}/**",
+            value = "/{deviceId}/**",
             consumes = {
                     "multipart/form-data"
             }

@@ -41,8 +41,8 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
 
         // Регистрируем WebSocketProxyHandler на /device-ws
         registry.addHandler(webSocketProxyHandler, "/ws")
-//                .setAllowedOrigins("*");  // Разрешаем запросы с любых доменов
-         .setAllowedOriginPatterns("http://localhost:*", "https://*.example.com");
+                .setAllowedOrigins("*");  // Разрешаем запросы с любых доменов
+//         .setAllowedOriginPatterns("http://localhost:*", "https://*.example.com", "172.16.42.1");
 //                .setAllowedOriginPatterns("https://*.example.com", "http://localhost:*","0.0.0.0","127.0.0.1") // Используем allowedOriginPatterns
 //                .setAllowedOrigins(null) // Полностью отключаем проверку источников
 //                .withSockJS(); // Добавляем поддержку SockJS для обратной совместимости
