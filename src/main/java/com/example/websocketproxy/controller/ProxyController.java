@@ -61,7 +61,7 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
 
     try {
         // Формируем HTTP-запрос и получаем его вместе с requestId
-        Map<String, String> httpRequestMap = httpRequest.buildHttpRequest(request, deviceId);
+        Map<String, String> httpRequestMap = httpUtils.buildHttpRequest(request, deviceId);
         // Извлекаем requestId и сам запрос из мапы
         String requestId = httpRequestMap.keySet().iterator().next();
         String httpRequest = httpRequestMap.get(requestId);
@@ -102,7 +102,7 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
 
     try {
         // Формируем HTTP-запрос и получаем его вместе с requestId
-        Map<String, String> httpRequestMap = httpRequest.buildHttpRequest(request, deviceId);
+        Map<String, String> httpRequestMap = httpUtils.buildHttpRequest(request, deviceId);
         // Извлекаем requestId и сам запрос из мапы
         String requestId = httpRequestMap.keySet().iterator().next();
         String httpRequest = httpRequestMap.get(requestId);
@@ -125,7 +125,7 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
             throw new MyLogger.CustomException("пустое тело запроса post");
 //                    return;
         }
-        boolean shouldCompress = myWebsocketUtils.shouldCompress(request.getContentType(), bytesRead, request.getRequestURI());
+//        boolean shouldCompress = myWebsocketUtils.shouldCompress(request.getContentType(), bytesRead, request.getRequestURI());
 
         byte[] requestBody;
 
@@ -134,7 +134,16 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
             // Отправляем только прочитанные данные
             byte[] dataToSend = Arrays.copyOf(initialBuffer, bytesRead);
             myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, dataToSend, true, false);
-        } else if (shouldCompress) {
+        //иначе если данные большие и должны быть сжаты
+//!!!!!! здесь нужно проверять если данные уже сжаты в заголовках взять инфу, то соответственно сжимать их уже не нужно это раз. но флаг gzip должен быть true/ А может ли клиент браузера вообще сам сжимать данные? при отправке данных пост
+        } else if (myWebsocketUtils.shouldCompress(request.getContentType(), bytesRead, request.getRequestURI()))  {
+            //по идее сюда мы попадаем только в том случае если пользовательский браузер не поддерживает сжатие
+            // или клиентски локальный сервер не поддерживает сжатие
+            // тогда в заголовках это указано и пользователь отправляет на прокси не сжатые большие данные, мы их сжимаем за него и проксируем на клиента - локальный севрер, и расжимаем по своей логике на клиенте и передаём на его локальный сервер расжатые данные
+
+
+            //!!! но если данные были сжаты браузером то наша логика на клиенте должна и это учитывать! т.е. мы должны проксировать сжатые данные как сжатые данные по стандарной логике... на клиентский локальный сервер
+
             requestBody = MyWebsocketUtils.compressData(initialBuffer);
             int compressDataLength = requestBody.length;
             MyLogger.logServer("Тело POST, размер до сжатия: " + bytesRead + " байт");
@@ -142,8 +151,12 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
 //            MyLogger.logServByteToString(initialBuffer);
             // значит отправлено не всё и скорее всего остались в потоке ещё данные
             if (bytesRead == WebSocketConfig.BUFFER_SIZE) {
+                //отправляем первую часть уже прочитанных данных
                 myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, requestBody, false, true);
-                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, true, compressDataLength);
+                //отправляем остальные данные частями, начиная от конца уже отправленной первой части.
+//                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, true, compressDataLength);
+//                это делает движок сам. т.е. читает данные следующие от прочитанных из потока
+                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, true);
             } else if (bytesRead < WebSocketConfig.BUFFER_SIZE){
                 myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, requestBody, true, true);
             }
@@ -158,7 +171,9 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
                 //отправляем уже считанную часть в самом начале
                 myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, initialBuffer, false, false);
                 // отправляем остальные части т.е. из inputStream уже считана первая часть продолжим от туда
-                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, false, bytesRead);
+//                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, false, bytesRead);
+// движок сам должен давать только следующие данные из потока
+                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, false);
                 // Вызываем новый метод для обработки ответа устройства
             }
         }
@@ -192,7 +207,7 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
 
         try {
             // Формируем HTTP-запрос и получаем его вместе с requestId
-            Map<String, String> httpRequestMap = httpRequest.buildHttpRequest(request, deviceId);
+            Map<String, String> httpRequestMap = httpUtils.buildHttpRequest(request, deviceId);
             // Извлекаем requestId и сам запрос из мапы
             String requestId = httpRequestMap.keySet().iterator().next();
             String httpRequest = httpRequestMap.get(requestId);

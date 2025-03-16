@@ -57,7 +57,6 @@ public class MyWebsocketUtils {
     }
 
 
-
     public static boolean shouldCompress(String contentType,  int contentLength, String fileName) {
 
         if (contentType == null || contentLength < 512) {  // Не сжимаем мелкие данные
@@ -124,15 +123,16 @@ public class MyWebsocketUtils {
 
 
     //отправка потока частями, с сжатием isGzip=True или без isGzip=False
-    public static void sendChunkInputStream(WebSocketSession deviceSession, String requestId, InputStream inputStream, boolean isGzip, int poss) throws Exception {
+//    public static void sendChunkInputStream(WebSocketSession deviceSession, String requestId, InputStream inputStream, boolean isGzip, int poss) throws Exception {
+    public static void sendChunkInputStream(WebSocketSession deviceSession, String requestId, InputStream inputStream, boolean isGzip) throws Exception {
         int initialBufferSize = WebSocketConfig.BUFFER_SIZE;
         byte[] buffer = new byte[initialBufferSize];
         int bytesRead=0;
         boolean isLast = false;
         while ((bytesRead = inputStream.read(buffer)) != -1) {
-            byte[] thisBuff = Arrays.copyOfRange(buffer, poss, bytesRead);
-//            byte[] thisBuff = Arrays.copyOf(buffer, bytesRead);
-            poss = 0;
+//            byte[] thisBuff = Arrays.copyOfRange(buffer, poss, bytesRead);
+            byte[] thisBuff = Arrays.copyOf(buffer, bytesRead);
+//            poss = 0;
             MyLogger.logServByteToString(thisBuff);
             // если передаём параметр сжатия, сжимаем данные, иначе нет
             byte[] chunk = isGzip ? compressData(thisBuff) : thisBuff;

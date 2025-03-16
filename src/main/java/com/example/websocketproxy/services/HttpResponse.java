@@ -189,11 +189,16 @@ public class HttpResponse {
         CompletableFuture<String> textResponseFuture = webSocketProxyHandler.waitForResponse(requestId);
         //ассинхронно дожидаемся получения всех данных по отправленному с контроллера запроса
 
-        String textResponse = textResponseFuture.get(20, TimeUnit.SECONDS);
+        String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
 //        String textResponse = textResponseFuture.get();
 
         // Извлекаем заголовки и тело текстового ответа
         HttpHeaders responseHeaders = HttpResponse.extractHeaders(textResponse);
+        DeviceSessionManager deviceLocalhostZipMethod = new DeviceSessionManager();
+
+        //это можно использовать в пост данных. !!!! нужно добавить методы гетер
+        deviceLocalhostZipMethod.addLocalhostInfoZip(deviceId, myWebsocketUtils.isCompressed(responseHeaders));
+
         String contentType = responseHeaders.getFirst(HttpHeaders.CONTENT_TYPE);
         String responseTextBody = HttpResponse.extractBody(textResponse);
         int statusCode = HttpResponse.extractStatusCode(textResponse);
@@ -205,7 +210,7 @@ public class HttpResponse {
             MyLogger.logServer("Ответ содержит только заголовки." + " значит ждём и бинарные данные");
             // Получаем бинарные данные для того же запроса
             CompletableFuture<byte[]> binaryResponseFuture = webSocketProxyHandler.waitForBinaryResponse(requestId);
-            binaryResponse = binaryResponseFuture.get(20, TimeUnit.SECONDS);
+            binaryResponse = binaryResponseFuture.get(120, TimeUnit.SECONDS);
 
 //            binaryResponse = binaryResponseFuture.get();
         }
@@ -220,9 +225,10 @@ public class HttpResponse {
             //в кодировке UTF-8 некоторые символы (например, символы из других языков или специальные символы) могут занимать более одного байта.
             byte[] bodyBytes = updateBody.getBytes(StandardCharsets.UTF_8);
 
-            int newContentLength = headerLength + bodyBytes.length;
+//при передачи файлов нужно указывать только размер символов у файла, без заголовков. видимо
+            //            int newContentLength = headerLength + bodyBytes.length;
 
-//            int newContentLength = bodyBytes.length;
+            int newContentLength = bodyBytes.length;
 
             responseHeaders.setContentLength(newContentLength);
 //            responseHeaders.remove("Content-Length");
