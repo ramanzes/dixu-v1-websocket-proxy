@@ -7,9 +7,6 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingQueue;
-
 @Component
 public class ProxyWebSocketHandler extends TextWebSocketHandler {
     // Объявление логгера
@@ -25,9 +22,9 @@ public class ProxyWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        String deviceId = deviceSessionManager.getDeviceIdFromSession(session);// getDeviceId(session);
+        String deviceId = deviceSessionManager.getDeviceIdFromThisSession(session);// getDeviceId(session);
         if (deviceId != null) {
-            deviceSessionManager.addSession(deviceId, session);
+            deviceSessionManager.addDeviceWithSession(deviceId, session);
 //            responseQueues.put(deviceId, new LinkedBlockingQueue<>());
             System.out.println("Device connected: " + deviceId);
         }
@@ -35,7 +32,7 @@ public class ProxyWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
-        String deviceId = deviceSessionManager.getDeviceIdFromSession(session); // getDeviceId(session);
+        String deviceId = deviceSessionManager.getDeviceIdFromThisSession(session); // getDeviceId(session);
         if (deviceId != null) {
             // Сохраняем ответ от устройства в соответствующую очередь
 //            responseQueues.get(deviceId).offer(message.getPayload());
@@ -49,9 +46,9 @@ public class ProxyWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
-        String deviceId = deviceSessionManager.getDeviceIdFromSession(session); // getDeviceId(session);
+        String deviceId = deviceSessionManager.getDeviceIdFromThisSession(session); // getDeviceId(session);
         if (deviceId != null) {
-            deviceSessionManager.removeSession(deviceId);
+            deviceSessionManager.removeDeviceWithSession(deviceId);
 //            responseQueues.remove(deviceId);
             System.out.println("Device disconnected: " + deviceId);
         }

@@ -48,7 +48,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         MyLogger.logServer("session.id = ["+session.getId()+"]");
-        String deviceId = deviceSessionManager.getDeviceIdFromSession(session);
+        String deviceId = deviceSessionManager.getDeviceIdFromThisSession(session);
         if (deviceId == null) {
             session.close(CloseStatus.BAD_DATA);
             MyLogger.logServer("Connection rejected: missing or invalid deviceId");
@@ -56,7 +56,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
         }
 
         // Проверка существующего подключения
-        if (deviceSessionManager.isDeviceConnected(deviceId)) {
+        if (deviceSessionManager.isThisDeviceConnected(deviceId)) {
             // Закрываем соединение с специальным статусом
             CloseStatus closeStatus = new CloseStatus(
                     4000,
@@ -79,7 +79,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
 
 
 
-        deviceSessionManager.addSession(deviceId, session);
+        deviceSessionManager.addDeviceWithSession(deviceId, session);
         textMessageBuffers.put(deviceId, new StringBuilder()); // Инициализация буфера для устройства
         byteMessageBuffers.put(deviceId, new ByteArrayOutputStream()); // Инициализация буфера для устройства
         MyLogger.logServer("Device connected: " + deviceId);
@@ -252,7 +252,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
     public void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
         //Синхронизация на уровне сессии (session) гарантирует, что все операции, связанные с одной сессией, выполняются последовательно.
         synchronized (session) {
-            String deviceId = deviceSessionManager.getDeviceIdFromSession(session);
+            String deviceId = deviceSessionManager.getDeviceIdFromThisSession(session);
             if (deviceId == null) {
                 MyLogger.logServer("Received message from unidentified session", true);
                 return;
@@ -342,7 +342,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
 
-        String deviceId = deviceSessionManager.getDeviceIdFromSession(session);
+        String deviceId = deviceSessionManager.getDeviceIdFromThisSession(session);
 
         //если это выход при существующем устройстве с таким же id то никаких объектов не создавалось в этой сессии поэтому тут делать нечего, просто выходим чтобы не ломать действующего подключения с таким же id устройства
         if (status.getCode()==4000) {
@@ -379,7 +379,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
                 }
                 }
             // Удаляем сессию устройства
-            deviceSessionManager.removeSession(deviceId);
+            deviceSessionManager.removeDeviceWithSession(deviceId);
             MyLogger.logServer("Device disconnected: " + deviceId);
         }
 

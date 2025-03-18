@@ -15,6 +15,15 @@ import java.util.*;
 
 @Component
 public class HttpUtils {
+   private DeviceSessionManager deviceSessionManager;
+
+    public HttpUtils(DeviceSessionManager deviceSessionManager) {
+        this.deviceSessionManager = deviceSessionManager;
+    }
+
+    public DeviceSessionManager getDeviceSessionManager() {
+        return deviceSessionManager;
+    }
 
     public static int getHeadersSize(HttpHeaders headers) {
        int  headersSize=0;
@@ -94,6 +103,13 @@ public class HttpUtils {
         return deviceId +"|"+ getUuid();
     }
 
+    // Метод для извлечения deviceId из строки
+    public static String extractDeviceId(String requestId) {
+        // Разделяем строку по символу '|'
+        String[] parts = requestId.split("\\|");
+        // Возвращаем первый элемент, который является deviceId
+        return parts.length > 0 ? parts[0] : null;
+    }
 
     public static byte[] buildMultipartFormData(String boundary, String fieldName, MultipartFile file) throws IOException {
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
@@ -117,6 +133,9 @@ public class HttpUtils {
 
         return outputStream.toByteArray();
     }
+
+
+
 
 
 }

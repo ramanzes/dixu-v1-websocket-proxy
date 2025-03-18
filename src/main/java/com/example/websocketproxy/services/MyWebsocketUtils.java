@@ -8,10 +8,7 @@ import org.springframework.http.HttpHeaders;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -27,6 +24,16 @@ import org.springframework.web.socket.WebSocketSession;
 
 @Component
 public class MyWebsocketUtils {
+    private final DeviceSessionManager deviceSessionManager;
+
+    public MyWebsocketUtils(DeviceSessionManager deviceSessionManager) {
+        this.deviceSessionManager = deviceSessionManager;
+    }
+
+    public DeviceSessionManager getDeviceSessionManager() {
+        return deviceSessionManager;
+    }
+
     private String getHeaders(String message) {
         int headerEndIndex = message.indexOf("\r\n\r\n");
         if (headerEndIndex == -1) {
@@ -37,15 +44,33 @@ public class MyWebsocketUtils {
         MyLogger.logServer(headers, true);
         return headers;
     }
-//
-    public static boolean isCompressed(HttpHeaders headers) {
+
+    // Метод, возвращающий множество поддерживаемых методов сжатия, найденных в заголовке
+    public Set<String> getSupportedCompressionMethods(HttpHeaders headers) {
+        Set<String> supportedMethods = new HashSet<>();
+
+        // Определяем поддерживаемые методы сжатия
+        Set<String> allSupportedMethods = new HashSet<>();
+        allSupportedMethods.add("gzip");
+        allSupportedMethods.add("deflate");
+        allSupportedMethods.add("br");
+        allSupportedMethods.add("compress");
+        allSupportedMethods.add("zstd");
+
+        // Получаем значение заголовка Content-Encoding
         String encoding = headers.getFirst("Content-Encoding");
-        if (encoding == null) return false;
-        encoding = encoding.toLowerCase();
+        if (encoding != null) {
+            encoding = encoding.toLowerCase();
 
+            // Проверяем, какие из поддерживаемых методов присутствуют в заголовке
+            for (String method : allSupportedMethods) {
+                if (encoding.contains(method)) {
+                    supportedMethods.add(method);
+                }
+            }
+        }
 
-        return encoding.contains("gzip") || encoding.contains("deflate") ||
-                encoding.contains("br") || encoding.contains("compress") || encoding.contains("zstd");
+        return supportedMethods;
     }
 
     public static Map<String, String> convertHttpHeadersToMap(HttpHeaders headers) {

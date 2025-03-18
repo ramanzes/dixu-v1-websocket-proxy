@@ -1,5 +1,6 @@
 package com.example.websocketproxy.services;
 
+import com.example.websocketproxy.repository.Devices;
 import com.example.websocketproxy.services.logsandexceptions.exceptions.DeviceWithThisIdIsInActiveSessionNow;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
@@ -12,55 +13,34 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DeviceSessionManager {
     //ключом является idDevice
 //    private final Map<String, WebSocketSession> deviceSessions = new ConcurrentHashMap<>();
+    private final Map<String, Devices> deviceSessions = new ConcurrentHashMap<>();
 
-    private final Map<String, ThisDevice> deviceSessions = new ConcurrentHashMap<>();
-
-    //поддерживает ли локальный сервер сжатие. данные обновляются при get запросах к устройству на контроллере
-    private final Map<String, Boolean> deviceLocalhostZipMethod = new ConcurrentHashMap<>();
-
-    //    private final Map<String, Map<String, String>> deviceCookies = new ConcurrentHashMap<>(); // Сохранение кук
-//
-    public void addSession(String deviceId, WebSocketSession session) {
-        if (isDeviceConnected(deviceId)) throw new DeviceWithThisIdIsInActiveSessionNow();
-        deviceSessions.put(deviceId, new ThisDevice(deviceId,session));
+    public void addDeviceWithSession(String deviceId, WebSocketSession session) {
+        if (isThisDeviceConnected(deviceId)) throw new DeviceWithThisIdIsInActiveSessionNow();
+        deviceSessions.put(deviceId, new Devices(deviceId,session));
     }
 
-
-    //метод добавляее информацию о локальном севрвере, о поддержке сжатия, на основе заголовков
-    public void addLocalhostInfoZip(String deviceId, Boolean result) {
-        if (!isDeviceConnected(deviceId)) throw new DeviceWithThisIdIsInActiveSessionNow();
-        deviceLocalhostZipMethod.put(deviceId, result);
-    }
-
-//    // Добавление кук
-//    public void addCookies(String requestId, Map<String, String> cookies) {
-//        deviceCookies.put(requestId, cookies);
-//    }
-//
-//    // Получение кук
-//    public Map<String, String> getCookies(String requestId) {
-//        return deviceCookies.getOrDefault(requestId, new ConcurrentHashMap<>());
-//    }
-
-    public void removeSession(String deviceId) {
+    public void removeDeviceWithSession(String deviceId) {
         deviceSessions.remove(deviceId);
     }
-
-    public WebSocketSession getSession(String deviceId) {
-        return deviceSessions.get(deviceId).session;
+    public Devices getThisDevice(String deviceId){
+     return deviceSessions.get(deviceId);
     }
 
-    public boolean isDeviceConnected(String deviceId) {
+    public WebSocketSession getSessionForThisDevice(String deviceId) {
+        return deviceSessions.get(deviceId).getSession();
+    }
+
+    public boolean isThisDeviceConnected(String deviceId) {
         return deviceSessions.containsKey(deviceId);
     }
 
-    public Map<String, ThisDevice> getAllSessions() {
+    public Map<String, Devices> getAllDevices() {
         return deviceSessions;
     }
 
-
     //получаем id устройства из параметров сессии
-    public String getDeviceIdFromSession(WebSocketSession session) {
+    public String getDeviceIdFromThisSession(WebSocketSession session) {
         try {
             String query = session.getUri().getQuery();
             if (query != null && query.contains("deviceId=")) {
@@ -99,21 +79,3 @@ public class DeviceSessionManager {
 
 }
 
-class ThisDevice{
-    String id="";
-    WebSocketSession session = null;
-    Boolean localservWithCompress = false;
-    String methodCompress = "";
-
-    public ThisDevice(String id,WebSocketSession session) {
-        this.id = id;
-        this.session = session;
-    }
-
-    public ThisDevice(String id, WebSocketSession session, Boolean localservWithCompress, String methodCompress) {
-        this.id = id;
-        this.session = session;
-        this.localservWithCompress = localservWithCompress;
-        this.methodCompress = methodCompress;
-    }
-}

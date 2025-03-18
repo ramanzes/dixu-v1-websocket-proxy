@@ -36,13 +36,13 @@ public class ProxyController {
 //    private WebSocketSession deviceSession;
 
 
-    public ProxyController(DeviceSessionManager deviceSessionManager, WebSocketProxyHandler webSocketProxyHandler, MyWebsocketUtils myWebsocketUtils, HttpRequest httpRequest, HttpResponse httpResponse, HttpUtils httpUtils) {
+    public ProxyController(DeviceSessionManager deviceSessionManager, WebSocketProxyHandler webSocketProxyHandler, HttpRequest httpRequest, HttpResponse httpResponse) {
         this.deviceSessionManager = deviceSessionManager;
         this.webSocketProxyHandler = webSocketProxyHandler;
-        this.myWebsocketUtils = myWebsocketUtils;
+        this.myWebsocketUtils = new MyWebsocketUtils(this.deviceSessionManager);
         this.httpRequest = httpRequest;
         this.httpResponse = httpResponse;
-        this.httpUtils = httpUtils;
+        this.httpUtils = new HttpUtils(this.deviceSessionManager);
     }
 
 
@@ -53,7 +53,7 @@ public class ProxyController {
 )
 public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
                                            HttpServletRequest request) {
-    WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
+    WebSocketSession deviceSession = deviceSessionManager.getSessionForThisDevice(deviceId);
 
     if (deviceSession == null || !deviceSession.isOpen()) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
@@ -62,6 +62,11 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
     try {
         // Формируем HTTP-запрос и получаем его вместе с requestId
         Map<String, String> httpRequestMap = httpUtils.buildHttpRequest(request, deviceId);
+
+        if (httpRequestMap.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to build HTTP request".getBytes(StandardCharsets.UTF_8));
+        }
+
         // Извлекаем requestId и сам запрос из мапы
         String requestId = httpRequestMap.keySet().iterator().next();
         String httpRequest = httpRequestMap.get(requestId);
@@ -71,9 +76,8 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
         // Отправляем запрос устройству через WebSocket
         myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
 
-
         // Вызываем метод для обработки ответа устройства
-        return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,deviceId,webSocketProxyHandler,myWebsocketUtils);
+        return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,webSocketProxyHandler,myWebsocketUtils);
 
     } catch (Exception e) {
         e.printStackTrace();
@@ -94,7 +98,7 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
 )
 public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String deviceId,
                                            HttpServletRequest request) {
-    WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
+    WebSocketSession deviceSession = deviceSessionManager.getSessionForThisDevice(deviceId);
 
     if (deviceSession == null || !deviceSession.isOpen()) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
@@ -181,7 +185,7 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
         inputStream.close();
 
         // Вызываем новый метод для обработки ответа устройства
-        return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,deviceId,webSocketProxyHandler,myWebsocketUtils);
+        return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,webSocketProxyHandler,myWebsocketUtils);
 
     } catch (Exception e) {
         e.printStackTrace();
@@ -200,7 +204,7 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
     )
     public ResponseEntity<byte[]> proxyMultipartPostRequest(@PathVariable String deviceId,
                                                             MultipartHttpServletRequest request) {
-        WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
+        WebSocketSession deviceSession = deviceSessionManager.getSessionForThisDevice(deviceId);
         if (deviceSession == null || !deviceSession.isOpen()) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
         }
@@ -241,7 +245,7 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
             }
 
             // Вызываем метод для обработки ответа устройства
-            return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId, deviceId, webSocketProxyHandler, myWebsocketUtils);
+            return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId, webSocketProxyHandler, myWebsocketUtils);
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -249,6 +253,9 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
                     .body(("Error occurred: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
         }
     }
+
+
+
 
 
 

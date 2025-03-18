@@ -1,5 +1,6 @@
 package com.example.websocketproxy.services;
 
+import com.example.websocketproxy.repository.Devices;
 import com.example.websocketproxy.services.logsandexceptions.MyLogger;
 import com.example.websocketproxy.services.logsandexceptions.exceptions.MyOtherExceptions;
 import com.example.websocketproxy.websocket.WebSocketProxyHandler;
@@ -7,6 +8,7 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -184,7 +186,7 @@ public class HttpResponse {
 
 
     //метод для обработки ответа устройства
-    public ResponseEntity<?> processDeviceResponse(String requestId, String deviceId, WebSocketProxyHandler webSocketProxyHandler, MyWebsocketUtils myWebsocketUtils) throws Exception {
+    public ResponseEntity<?> processDeviceResponse(String requestId, WebSocketProxyHandler webSocketProxyHandler, MyWebsocketUtils myWebsocketUtils) throws Exception {
         // Ждем ответ от устройства
         CompletableFuture<String> textResponseFuture = webSocketProxyHandler.waitForResponse(requestId);
         //ассинхронно дожидаемся получения всех данных по отправленному с контроллера запроса
@@ -193,11 +195,30 @@ public class HttpResponse {
 //        String textResponse = textResponseFuture.get();
 
         // Извлекаем заголовки и тело текстового ответа
-        HttpHeaders responseHeaders = HttpResponse.extractHeaders(textResponse);
-        DeviceSessionManager deviceLocalhostZipMethod = new DeviceSessionManager();
 
-        //это можно использовать в пост данных. !!!! нужно добавить методы гетер
-        deviceLocalhostZipMethod.addLocalhostInfoZip(deviceId, myWebsocketUtils.isCompressed(responseHeaders));
+        HttpHeaders responseHeaders = HttpResponse.extractHeaders(textResponse);
+        String deviceId = HttpUtils.extractDeviceId(requestId);
+        Devices thisDevice = myWebsocketUtils.getDeviceSessionManager().getThisDevice(deviceId);
+
+        // !!!! веб-сервер в каждом ответе может решать, что данные можно не сжимать например если они слишком малы,
+        // но при этом он поддерживает сжатие, т.е. сжатие относится не к локальному серверу устройства, а к каждому ответу на запрос
+
+        Set<String> methodThisResponseCompress = myWebsocketUtils.getSupportedCompressionMethods(responseHeaders);
+
+        //устанавливаем устройству флаг (не)/поддержки сжатия. только в том случае если флаг для устройства ещё не был ни в одном из ответов установлен.
+        //это можно использовать в пост данных.
+
+        if (!thisDevice.getLocalservWithCompress() && !methodThisResponseCompress.isEmpty())   //если стоят дефолтные параметры т.е. запускаем метод установки новых значений
+            //тут значение thisDevice.getLocalservWithCompress() может измениться
+            thisDevice.setMethodCompress(methodThisResponseCompress);
+
+        //здесь у нас есть понимание данный ответ сжат или нет methodThisResponseCompress.isEmpty()
+        //а также поддерживает ли устройство в принципе сжатие thisDevice.getLocalservWithCompress()
+
+        //если устройство поддерживает сжатие но данные ответ не сжат, значит мы его проксируем как есть доверяя правилам локального сервера устройства на этом поприще
+        //если же устройство не поддерживает сжатие, то на клиенте логика должна быть такова что ответ(при необходимости) будет сжат если не локальным сервером, то самим клиентом
+
+        //!!!! А ЗНАЧИТ НАМ ВООБЩЕ НЕ ОБЯЗАТЕЛЬНО ЗНАТЬ О ВОЗМОЖНОСТЯХ ЛОКАЛЬНОГО СЕРВЕРА ПО ВОПРОСУ СЖАТИЯ !!!!!
 
         String contentType = responseHeaders.getFirst(HttpHeaders.CONTENT_TYPE);
         String responseTextBody = HttpResponse.extractBody(textResponse);
@@ -205,6 +226,7 @@ public class HttpResponse {
 
         byte[] binaryResponse = null;
 
+        //!!! разобраться с кэшированными данными и их безошибочным проксированием
 //        if (responseTextBody.length() == 0 && statusCode != 304 && statusCode != 204 && statusCode != 205) {
         if (responseTextBody.length() == 0) {
             MyLogger.logServer("Ответ содержит только заголовки." + " значит ждём и бинарные данные");
@@ -249,7 +271,8 @@ public class HttpResponse {
                 }
 
                 Object body = null;
-                if (myWebsocketUtils.isCompressed(responseHeaders)) {
+                //здесь после первого запроса должны быть данные об устройстве
+                if (thisDevice.getLocalservWithCompress()) {
                     MyLogger.logServer("Данные сжаты, разжимаем...:\n");
                     body = decompress(binaryResponse, responseHeaders);
 //после распаковки убираем в заголовках отметки о том что контент сжат
