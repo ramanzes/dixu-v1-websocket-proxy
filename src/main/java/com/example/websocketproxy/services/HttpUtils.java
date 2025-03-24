@@ -58,7 +58,7 @@ public class HttpUtils {
     }
 
     //метод формирует HTTP-запрос (httpRequest)
-    public Map<String, String> buildHttpRequest(HttpServletRequest request, String deviceId) throws Exception {
+    public Map<String, String> buildHttpRequest(HttpServletRequest request, String deviceId, String sessionId) throws Exception {
         // Генерация уникального requestId для каждого запроса пользователя
         String requestId = this.generateRequestId(deviceId);
 
@@ -74,7 +74,7 @@ public class HttpUtils {
         requestBuilder.append(fullPath).append(" HTTP/1.1\n");
         // Добавляем requestId в заголовки
         requestBuilder.append("X-Request-Id: ").append(requestId).append("\n");
-
+        requestBuilder.append("Session-Id: ").append(sessionId).append("\n");
         // Добавляем все остальные поля заголовка
         Enumeration<String> headerNames = request.getHeaderNames();
         while (headerNames.hasMoreElements()) {

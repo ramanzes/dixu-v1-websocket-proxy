@@ -48,7 +48,7 @@ public class MyLogger {
     //логи для дебага
     //неважно что ставит разраб true или false так как если он указывает этот параметр, то будет действовать условие из константы. благодаря перезагрузки метода
     public static void logServer(String logs, boolean debug) {
-        if (WebSocketConfig.DEBUG) {
+        if (WebSocketConfig.isDEBUG()) {
             // Получаем стек вызовов
             StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
             // Получаем элемент стека, который соответствует методу printWithContext

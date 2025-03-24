@@ -6,6 +6,7 @@ import com.example.websocketproxy.services.HttpRequest;
 import com.example.websocketproxy.websocket.WebSocketProxyHandler;
 import com.example.websocketproxy.services.logsandexceptions.MyLogger;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.http.*;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
@@ -25,6 +26,7 @@ import java.util.Map;
 @RequestMapping(
         value = "/p"
 )
+@SessionAttributes("userSession")  // Связываем сессию с пользователем
 public class ProxyController {
 
     private final DeviceSessionManager deviceSessionManager;
@@ -52,7 +54,8 @@ public class ProxyController {
         method = {RequestMethod.GET}
 )
 public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
-                                           HttpServletRequest request) {
+                                           HttpServletRequest request, HttpSession session)  // Получаем HTTP-сессию пользователя
+ {
     WebSocketSession deviceSession = deviceSessionManager.getSessionForThisDevice(deviceId);
 
     if (deviceSession == null || !deviceSession.isOpen()) {
@@ -60,8 +63,14 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
     }
 
     try {
+
+        // Получаем HTTP-сессию пользователя
+        String sessionId = session.getId();
+        MyLogger.logServer("User Session ID: " + sessionId);
+
+
         // Формируем HTTP-запрос и получаем его вместе с requestId
-        Map<String, String> httpRequestMap = httpUtils.buildHttpRequest(request, deviceId);
+        Map<String, String> httpRequestMap = httpUtils.buildHttpRequest(request, deviceId, sessionId);
 
         if (httpRequestMap.isEmpty()) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to build HTTP request".getBytes(StandardCharsets.UTF_8));
@@ -73,6 +82,14 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
 
         MyLogger.logServer("requestPath: [ " + httpRequest.split("\n")[0] + "]");
         MyLogger.logServer("httpRequest: ["+httpRequest+"]");
+
+
+        // Добавляем sessionId в WebSocket-сообщение !!!! теперь научиться это парсить на стороне клиента
+//        String wrappedRequest = "SESSION-ID: " + sessionId + "\n" + httpRequest;
+
+        // Отправляем запрос устройству через WebSocket
+//        myWebsocketUtils.sendMessage(deviceSession, new TextMessage(wrappedRequest));
+
         // Отправляем запрос устройству через WebSocket
         myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
 
@@ -97,7 +114,7 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
         }
 )
 public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String deviceId,
-                                           HttpServletRequest request) {
+                                           HttpServletRequest request, HttpSession session) {
     WebSocketSession deviceSession = deviceSessionManager.getSessionForThisDevice(deviceId);
 
     if (deviceSession == null || !deviceSession.isOpen()) {
@@ -105,8 +122,12 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
     }
 
     try {
+
+        // Получаем HTTP-сессию пользователя
+        String sessionId = session.getId();
+        MyLogger.logServer("User Session ID: " + sessionId);
         // Формируем HTTP-запрос и получаем его вместе с requestId
-        Map<String, String> httpRequestMap = httpUtils.buildHttpRequest(request, deviceId);
+        Map<String, String> httpRequestMap = httpUtils.buildHttpRequest(request, deviceId, sessionId);
         // Извлекаем requestId и сам запрос из мапы
         String requestId = httpRequestMap.keySet().iterator().next();
         String httpRequest = httpRequestMap.get(requestId);
@@ -117,7 +138,7 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
         myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
         //инициируем переменную для приёма потока данных от клиента из его запроса, из тела post
         InputStream inputStream = request.getInputStream();
-        int initialBufferSize = WebSocketConfig.BUFFER_SIZE;
+        int initialBufferSize = WebSocketConfig.getBUFFER_SIZE();
 
         // Читаем первые байты, чтобы определить стратегию
         byte[] initialBuffer = new byte[initialBufferSize];
@@ -133,7 +154,7 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
 
         byte[] requestBody;
 
-        if(bytesRead < 512){
+        if(bytesRead < WebSocketConfig.getCOMPRESSMINSIZE()){
             MyLogger.logServer("Тело POST имеет маленький размер, отправляем сразу без сжатия в одном бинарном запросе, размер" + bytesRead + " байт");
             // Отправляем только прочитанные данные
             byte[] dataToSend = Arrays.copyOf(initialBuffer, bytesRead);
@@ -154,24 +175,24 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
             MyLogger.logServer("Тело POST сжато (GZIP), размер после: " + compressDataLength + " байт");
 //            MyLogger.logServByteToString(initialBuffer);
             // значит отправлено не всё и скорее всего остались в потоке ещё данные
-            if (bytesRead == WebSocketConfig.BUFFER_SIZE) {
+            if (bytesRead == WebSocketConfig.getBUFFER_SIZE()) {
                 //отправляем первую часть уже прочитанных данных
                 myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, requestBody, false, true);
                 //отправляем остальные данные частями, начиная от конца уже отправленной первой части.
 //                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, true, compressDataLength);
 //                это делает движок сам. т.е. читает данные следующие от прочитанных из потока
                 myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, true);
-            } else if (bytesRead < WebSocketConfig.BUFFER_SIZE){
+            } else if (bytesRead < WebSocketConfig.getBUFFER_SIZE()){
                 myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, requestBody, true, true);
             }
         } else{
             //это могут быть большие данные уже сжатые или не требующие сжатия по тем или иным причинам
             MyLogger.logServer("Тело POST отправляется потоком без сжатия");
 
-            if (bytesRead < WebSocketConfig.BUFFER_SIZE) {
+            if (bytesRead < WebSocketConfig.getBUFFER_SIZE()) {
                 //отправляем уже считанную часть в самом начале
                 myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, initialBuffer, true, false);
-            } else if (bytesRead == WebSocketConfig.BUFFER_SIZE) {
+            } else if (bytesRead == WebSocketConfig.getBUFFER_SIZE()) {
                 //отправляем уже считанную часть в самом начале
                 myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, initialBuffer, false, false);
                 // отправляем остальные части т.е. из inputStream уже считана первая часть продолжим от туда
@@ -203,15 +224,19 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
             }
     )
     public ResponseEntity<byte[]> proxyMultipartPostRequest(@PathVariable String deviceId,
-                                                            MultipartHttpServletRequest request) {
+                                                            MultipartHttpServletRequest request, HttpSession session) {
         WebSocketSession deviceSession = deviceSessionManager.getSessionForThisDevice(deviceId);
         if (deviceSession == null || !deviceSession.isOpen()) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
         }
 
         try {
+
+            // Получаем HTTP-сессию пользователя
+            String sessionId = session.getId();
+            MyLogger.logServer("User Session ID: " + sessionId);
             // Формируем HTTP-запрос и получаем его вместе с requestId
-            Map<String, String> httpRequestMap = httpUtils.buildHttpRequest(request, deviceId);
+            Map<String, String> httpRequestMap = httpUtils.buildHttpRequest(request, deviceId, sessionId);
             // Извлекаем requestId и сам запрос из мапы
             String requestId = httpRequestMap.keySet().iterator().next();
             String httpRequest = httpRequestMap.get(requestId);

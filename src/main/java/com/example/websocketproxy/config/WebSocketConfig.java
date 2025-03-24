@@ -1,5 +1,6 @@
 package com.example.websocketproxy.config;
 
+import com.example.websocketproxy.services.logsandexceptions.exceptions.MyOtherExceptions;
 import com.example.websocketproxy.websocket.WebSocketProxyHandler;
 import com.example.websocketproxy.websocket.ProxyWebSocketHandler;
 import org.springframework.context.annotation.Bean;
@@ -9,18 +10,56 @@ import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.socket.config.annotation.*;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Properties;
+
 @Configuration
 @EnableWebSocket
 public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBrokerConfigurer {
-   public static final int BUFFER_SIZE = 4096;
-   public static final boolean DEBUG = true;
+   private static int BUFFER_SIZE;
+   private static int COMPRESSMINSIZE;
+   private static boolean DEBUG;
    private final ProxyWebSocketHandler proxyWebSocketHandler;
    private final WebSocketProxyHandler webSocketProxyHandler;
 
+    public static int getBUFFER_SIZE() {
+        return BUFFER_SIZE;
+    }
+
+    public static boolean isDEBUG() {
+        return DEBUG;
+    }
+
+    public static int getCOMPRESSMINSIZE() {
+        return COMPRESSMINSIZE;
+    }
 
     public WebSocketConfig(ProxyWebSocketHandler proxyWebSocketHandler, WebSocketProxyHandler webSocketProxyHandler) {
         this.proxyWebSocketHandler = proxyWebSocketHandler;
         this.webSocketProxyHandler = webSocketProxyHandler;
+
+        Properties properties = new Properties();
+        try (InputStream input = WebSocketConfig.class.getClassLoader().getResourceAsStream("application.properties")) {
+            if (input == null) {
+                throw new MyOtherExceptions("не заполнен файл конфигураций \"main.resources.application.properties\"");
+            }
+            properties.load(input);
+
+            this.DEBUG = Boolean.parseBoolean(properties.getProperty("DEBUG"));
+            this.BUFFER_SIZE = Integer.parseInt(properties.getProperty("BUFFER_SIZE"));
+            this.COMPRESSMINSIZE = Integer.parseInt(properties.getProperty("COMPRESSMINSIZE"));
+
+//            System.out.println("Application Name: " + appName);
+//            System.out.println("Application Version: " + appVersion);
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
+
+
+
+
+
     }
 
     @Override

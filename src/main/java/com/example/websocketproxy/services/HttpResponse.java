@@ -208,8 +208,12 @@ public class HttpResponse {
         //устанавливаем устройству флаг (не)/поддержки сжатия. только в том случае если флаг для устройства ещё не был ни в одном из ответов установлен.
         //это можно использовать в пост данных.
 
-        if (!thisDevice.getLocalservWithCompress() && !methodThisResponseCompress.isEmpty())   //если стоят дефолтные параметры т.е. запускаем метод установки новых значений
-            //тут значение thisDevice.getLocalservWithCompress() может измениться
+        //этот ответ сжат?
+        boolean thisResponseCompress = !methodThisResponseCompress.isEmpty();
+
+        //если стоят дефолтные параметры т.е. запускаем метод установки новых значений
+        if (!thisDevice.getLocalservWithCompress() && thisResponseCompress)
+            //ТУТ ЗНАЧЕНИЕ thisDevice.getLocalservWithCompress() МОЖЕТ В ПЕРВЫЙ И ЕДИНСТВЕННЫЙ РАЗ ИЗМЕНИТЬСЯ
             thisDevice.setMethodCompress(methodThisResponseCompress);
 
         //здесь у нас есть понимание данный ответ сжат или нет methodThisResponseCompress.isEmpty()
@@ -272,7 +276,17 @@ public class HttpResponse {
 
                 Object body = null;
                 //здесь после первого запроса должны быть данные об устройстве
-                if (thisDevice.getLocalservWithCompress()) {
+                // !!!НО САМ ОТВЕТ МОЖЕТ БЫТЬ И НЕ СЖАТ ЕСЛИ ОН МЕНЬШЕ ЧЕМ НУЖНО ДЛЯ ЭТОГО
+                // нужно работать с каждым ответом по этому вопросу отдельно !!!!
+//                if (thisDevice.getLocalservWithCompress()) {
+
+                if (thisResponseCompress){
+
+                //!!! ТАКЖЕ СТОИТ УЧИТЫВАТЬ ПОДДЕРЖИВАЕТ ЛИ БРАУЗЕР ПОЛЬЗОВАТЕЛЯ СЖАТЫЙ КОНТЕНТ, Т.Е. БЫЛИ ЗАПРОС НА СЖАТИЕ
+                // И ТОЛЬКО В ТОМ СЛУЧАЕ ЕСЛИ ЕГО НЕ БЫЛО РАСЖИМАТЬ. ИНАЧЕ ЕСЛИ И ЛОКАЛЬНЫЙ СЕРВЕР И БРАУЗЕР ПОЛЬЗОВАТЕЛЯ ПОДДЕРЖИВАЕТ ОТДАВАТЬ КАК ЕСТЬ СЖАТЫЙ
+                // ОДНАКО ЕСЛИ НЕ ПОДДЕРЖИВАЕТ ЛОКАЛЬНЫЙ СЕРВЕР, но браузер запрашивал сжатие, мы должны сформировать
+                // тело ответа из своего метода сжатия по сокету и отдать его по стандарту http
+
                     MyLogger.logServer("Данные сжаты, разжимаем...:\n");
                     body = decompress(binaryResponse, responseHeaders);
 //после распаковки убираем в заголовках отметки о том что контент сжат

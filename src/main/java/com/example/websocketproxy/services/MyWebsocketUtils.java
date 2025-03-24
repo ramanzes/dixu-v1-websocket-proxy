@@ -84,7 +84,7 @@ public class MyWebsocketUtils {
 
     public static boolean shouldCompress(String contentType,  int contentLength, String fileName) {
 
-        if (contentType == null || contentLength < 512) {  // Не сжимаем мелкие данные
+        if (contentType == null || contentLength < WebSocketConfig.getCOMPRESSMINSIZE()) {  // Не сжимаем мелкие данные
             return false;
         }
         // Проверяем по MIME-типа
@@ -150,7 +150,7 @@ public class MyWebsocketUtils {
     //отправка потока частями, с сжатием isGzip=True или без isGzip=False
 //    public static void sendChunkInputStream(WebSocketSession deviceSession, String requestId, InputStream inputStream, boolean isGzip, int poss) throws Exception {
     public static void sendChunkInputStream(WebSocketSession deviceSession, String requestId, InputStream inputStream, boolean isGzip) throws Exception {
-        int initialBufferSize = WebSocketConfig.BUFFER_SIZE;
+        int initialBufferSize = WebSocketConfig.getBUFFER_SIZE();
         byte[] buffer = new byte[initialBufferSize];
         int bytesRead=0;
         boolean isLast = false;
@@ -217,7 +217,7 @@ public class MyWebsocketUtils {
 //Метод для потоковой отправки multipart/form-data
 public  void sendMultipartFormDataStream(WebSocketSession deviceSession, String requestId, String boundary, String fieldName, MultipartFile file) throws Exception {
         InputStream inputStream = file.getInputStream();
-        byte[] buffer = new byte[WebSocketConfig.BUFFER_SIZE];
+        byte[] buffer = new byte[WebSocketConfig.getBUFFER_SIZE()];
         int bytesRead;
         boolean isFirstChunk = true;
 
