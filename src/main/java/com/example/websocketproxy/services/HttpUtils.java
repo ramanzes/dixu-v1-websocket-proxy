@@ -1,5 +1,6 @@
 package com.example.websocketproxy.services;
 
+import com.example.websocketproxy.repository.UsersSessionManager;
 import com.example.websocketproxy.services.logsandexceptions.MyLogger;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
@@ -16,6 +17,13 @@ import java.util.*;
 @Component
 public class HttpUtils {
    private DeviceSessionManager deviceSessionManager;
+
+    //singleton
+    private final UsersSessionManager usersSessionManager = UsersSessionManager.getInstance();
+
+    public UsersSessionManager getUsersSessionManager() {
+        return usersSessionManager;
+    }
 
     public HttpUtils(DeviceSessionManager deviceSessionManager) {
         this.deviceSessionManager = deviceSessionManager;
@@ -88,6 +96,12 @@ public class HttpUtils {
         // Создаем мапу и помещаем туда пару ключ-значение
         Map<String, String> httpRequestMap = new HashMap<>();
         httpRequestMap.put(requestId, requestBuilder.toString());
+
+
+
+        //связываем запрос с клиентской сессией
+        //!! также нужно будет освободиться от этого после ответа
+        getUsersSessionManager().addRequestToSession(sessionId,requestId);
 
         return httpRequestMap;
     }

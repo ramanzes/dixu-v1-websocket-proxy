@@ -1,6 +1,7 @@
 package com.example.websocketproxy.controller;
 
 import com.example.websocketproxy.config.WebSocketConfig;
+import com.example.websocketproxy.repository.UsersSessionManager;
 import com.example.websocketproxy.services.*;
 import com.example.websocketproxy.services.HttpRequest;
 import com.example.websocketproxy.websocket.WebSocketProxyHandler;
@@ -16,6 +17,8 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.*;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
@@ -26,7 +29,7 @@ import java.util.Map;
 @RequestMapping(
         value = "/p"
 )
-@SessionAttributes("userSession")  // Связываем сессию с пользователем
+@SessionAttributes("userSessionManager")  // Связываем сессию с пользователем
 public class ProxyController {
 
     private final DeviceSessionManager deviceSessionManager;
@@ -35,7 +38,7 @@ public class ProxyController {
     private final HttpRequest httpRequest;
     private final HttpResponse httpResponse;
     private final HttpUtils httpUtils;
-//    private WebSocketSession deviceSession;
+
 
 
     public ProxyController(DeviceSessionManager deviceSessionManager, WebSocketProxyHandler webSocketProxyHandler, HttpRequest httpRequest, HttpResponse httpResponse) {
@@ -68,8 +71,8 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
         String sessionId = session.getId();
         MyLogger.logServer("User Session ID: " + sessionId);
 
-
-        // Формируем HTTP-запрос и получаем его вместе с requestId
+        // Формируем HTTP-запрос и получаем его вместе с requestId, передаём и sessionId в строителя заголовка
+//   и там же связываем запрос с клиентской сессией
         Map<String, String> httpRequestMap = httpUtils.buildHttpRequest(request, deviceId, sessionId);
 
         if (httpRequestMap.isEmpty()) {
@@ -77,9 +80,18 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
         }
 
         // Извлекаем requestId и сам запрос из мапы
+       // !! проследить где мы освобождаем память от этого запроса после использования... т.е. получения полностью ответа
         String requestId = httpRequestMap.keySet().iterator().next();
-        String httpRequest = httpRequestMap.get(requestId);
 
+        UsersSessionManager usersSessionManager = httpUtils.getUsersSessionManager();
+        //связываем запрос с клиентской сессией
+        //!! также нужно будет освободиться от этого запроса после ответа
+        usersSessionManager.addRequestToSession(sessionId,requestId);
+
+        //если это вообще первый запрос от клиента, то нужно понять какие методы сжатия поддерживает его браузер
+
+
+        String httpRequest = httpRequestMap.get(requestId);
         MyLogger.logServer("requestPath: [ " + httpRequest.split("\n")[0] + "]");
         MyLogger.logServer("httpRequest: ["+httpRequest+"]");
 
@@ -153,11 +165,11 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
 //        boolean shouldCompress = myWebsocketUtils.shouldCompress(request.getContentType(), bytesRead, request.getRequestURI());
 
         byte[] requestBody;
-
         if(bytesRead < WebSocketConfig.getCOMPRESSMINSIZE()){
             MyLogger.logServer("Тело POST имеет маленький размер, отправляем сразу без сжатия в одном бинарном запросе, размер" + bytesRead + " байт");
             // Отправляем только прочитанные данные
             byte[] dataToSend = Arrays.copyOf(initialBuffer, bytesRead);
+            MyLogger.logServByteToString(dataToSend);
             myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, dataToSend, true, false);
         //иначе если данные большие и должны быть сжаты
 //!!!!!! здесь нужно проверять если данные уже сжаты в заголовках взять инфу, то соответственно сжимать их уже не нужно это раз. но флаг gzip должен быть true/ А может ли клиент браузера вообще сам сжимать данные? при отправке данных пост
@@ -206,13 +218,172 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
         inputStream.close();
 
         // Вызываем новый метод для обработки ответа устройства
-        return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,webSocketProxyHandler,myWebsocketUtils);
+//        return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,webSocketProxyHandler,myWebsocketUtils);
+
+        //{!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!}
+
+        // Когда получаем ответ от устройства
+        ResponseEntity response = (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId, webSocketProxyHandler, myWebsocketUtils);
+
+        response = processDeviceResponse(response);
+
+        return response;
 
     } catch (Exception e) {
         e.printStackTrace();
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(("Error occurred: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
     }
 }
+
+
+
+    /**
+     * Обрабатывает ответ от локального сервера и при необходимости обновляет URL в браузере
+     * сохраняя базовый путь прокси (/p/device-XXX) и добавляя к нему новый путь из заголовка
+     */
+    public ResponseEntity<?> processDeviceResponse(ResponseEntity<?> response) {
+        // Сначала выведем все заголовки для диагностики
+        debugHeaders(response.getHeaders());
+
+        // Проверяем наличие заголовка X-Request-URL и получаем его значение
+        String newUrl = extractRequestUrl(response.getHeaders());
+
+        // Если найден заголовок X-Request-URL и ответ содержит HTML
+        if (newUrl != null &&
+                response.getHeaders().getContentType() != null &&
+                response.getHeaders().getContentType().includes(MediaType.TEXT_HTML)) {
+
+            byte[] responseBody = (byte[]) response.getBody();
+            if (responseBody == null) {
+                return response; // Если тело ответа пустое, возвращаем как есть
+            }
+
+            // Преобразуем тело ответа в строку
+            String html = new String(responseBody, StandardCharsets.UTF_8);
+
+            // Получаем относительный путь из полного URL
+            String relPath = getPartUrl(newUrl);
+
+            // Формируем JavaScript для обновления URL с сохранением базового пути прокси
+            String script = createUrlUpdateScript(relPath);
+
+            // Добавляем скрипт перед закрывающим тегом </body>
+            if (html.contains("</body>")) {
+                html = html.replace("</body>", script + "</body>");
+            } else {
+                // Если тег </body> не найден, добавляем скрипт в конец документа
+                html = html + script;
+            }
+
+            // Возвращаем модифицированный ответ
+            return ResponseEntity.status(response.getStatusCode())
+                    .headers(response.getHeaders())
+                    .body(html.getBytes(StandardCharsets.UTF_8));
+        }
+
+        // Если не требуется изменение URL или формат не HTML, возвращаем исходный ответ
+        return response;
+    }
+
+    /**
+     * Извлекает URL из заголовков ответа
+     */
+    private String extractRequestUrl(HttpHeaders headers) {
+        String newUrl = null;
+
+        // Сначала пробуем стандартное имя заголовка
+        if (headers.containsKey("X-Request-URL")) {
+            newUrl = headers.getFirst("X-Request-URL");
+        } else {
+            // Если не найдено, ищем по частичному совпадению (нестрогий поиск)
+            for (String headerName : headers.keySet()) {
+                if (headerName.toLowerCase().contains("x-request-url")) {
+                    newUrl = headers.getFirst(headerName);
+                    break;
+                }
+            }
+        }
+
+        // Обрабатываем случай, когда значение начинается с ": "
+        if (newUrl != null && newUrl.startsWith(": ")) {
+            newUrl = newUrl.substring(2);
+        }
+
+        return newUrl;
+    }
+
+    /**
+     * Создает JavaScript для обновления URL в браузере
+     */
+    private String createUrlUpdateScript(String relPath) {
+        return "<script>\n" +
+                "  // Получаем текущий URL\n" +
+                "  let currentUrl = window.location.href;\n" +
+                "  // Удаляем завершающий слеш, если есть\n" +
+                "  if (currentUrl.endsWith('/') && currentUrl.length > 1) {\n" +
+                "    currentUrl = currentUrl.slice(0, -1);\n" +
+                "  }\n" +
+                "  // Находим базовый URL прокси\n" +
+                "  let baseUrl = currentUrl;\n" +
+                "  // Формат URL: https://localhost:8443/p/device-XXXX\n" +
+                "  if (baseUrl.indexOf('/p/') > -1) {\n" +
+                "    // Разбиваем URL по сегменту '/p/'\n" +
+                "    let parts = baseUrl.split('/p/');\n" +
+                "    if (parts.length > 1) {\n" +
+                "      // Берем первый сегмент после '/p/' (device-XXXX)\n" +
+                "      let deviceSegment = parts[1].split('/')[0];\n" +
+                "      // Собираем базовый URL: протокол + хост + '/p/' + deviceId\n" +
+                "      baseUrl = parts[0] + '/p/' + deviceSegment;\n" +
+                "    }\n" +
+                "  }\n" +
+                "  // Убеждаемся, что путь начинается с '/'\n" +
+                "  let newPath = '" + relPath + "';\n" +
+                "  if (!newPath.startsWith('/')) {\n" +
+                "    newPath = '/' + newPath;\n" +
+                "  }\n" +
+                "  // Добавляем новый путь к базовому URL\n" +
+                "  const newUrl = baseUrl + newPath;\n" +
+                "  // Обновляем URL в браузере без перезагрузки страницы\n" +
+                "  window.history.pushState({}, '', newUrl);\n" +
+                "  console.log('URL обновлен на: ' + newUrl);\n" +
+                "</script>";
+    }
+
+    /**
+     * Извлекает относительный путь из полного URL
+     */
+    public String getPartUrl(String fullUrl) {
+        String relativePath = "";
+        if (fullUrl != null) {
+            try {
+                URL url = new URL(fullUrl);
+                relativePath = url.getPath(); // Получаем только путь без домена
+
+                // Добавляем query параметры, если они есть
+                if (url.getQuery() != null && !url.getQuery().isEmpty()) {
+                    relativePath += "?" + url.getQuery();
+                }
+            } catch (MalformedURLException e) {
+                // Обработка ошибки
+                System.err.println("Неверный формат URL: " + e.getMessage());
+            }
+        }
+        return relativePath;
+    }
+
+    /**
+     * Выводит все заголовки для диагностики
+     */
+    private void debugHeaders(HttpHeaders headers) {
+        System.out.println("---- DEBUG: Response Headers ----");
+        for (String headerName : headers.keySet()) {
+            System.out.println(headerName + " = " + headers.get(headerName));
+        }
+        System.out.println("--------------------------------");
+    }
+
+
+
 
 
 //контроллер обрабатывает Post запросы multipart
@@ -283,150 +454,6 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
 
 
 
-
-//    @PostMapping(
-//            value = "p/{deviceId}/**",
-//            consumes = {
-//                    "multipart/form-data"
-//            }
-//    )
-//    public ResponseEntity<byte[]> proxyMultipartPostRequest(@PathVariable String deviceId,
-//                                                            MultipartHttpServletRequest request) {
-//        WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
-//        if (deviceSession == null || !deviceSession.isOpen()) {
-//            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
-//        }
-//
-//        try {
-//            // Формируем HTTP-запрос и получаем его вместе с requestId
-//            Map<String, String> httpRequestMap = httpRequest.buildHttpRequest(request, deviceId);
-//            // Извлекаем requestId и сам запрос из мапы
-//            String requestId = httpRequestMap.keySet().iterator().next();
-//            String httpRequest = httpRequestMap.get(requestId);
-//
-//            MyLogger.logServer("requestPath: [ " + httpRequest.split("\n")[0] + "]");
-//            MyLogger.logServer("httpRequest: [" + httpRequest + "]");
-//
-//            // Отправляем запрос устройству через WebSocket
-//            myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
-//
-//            // Получаем boundary из заголовка Content-Type
-//            String contentType = request.getContentType();
-//            String boundary = contentType.substring(contentType.indexOf("boundary=") + 9);
-//
-//            // Обрабатываем multipart-данные
-//            for (Map.Entry<String, MultipartFile> entry : request.getFileMap().entrySet()) {
-//                MultipartFile file = entry.getValue();
-//                String fileName = file.getOriginalFilename();
-//                MyLogger.logServer("Обрабатываем файл: " + fileName);
-//
-//                // Формируем multipart/form-data
-//                byte[] multipartData = HttpRequest.buildMultipartFormData(boundary, entry.getKey(), file);
-//
-//                // Отправляем данные через WebSocket
-//                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, multipartData, true, false);
-//            }
-//
-//            // Обрабатываем текстовые данные формы (если есть)
-//            Map<String, String[]> formData = request.getParameterMap();
-//            for (Map.Entry<String, String[]> entry : formData.entrySet()) {
-//                String key = entry.getKey();
-//                String[] values = entry.getValue();
-//                MyLogger.logServer("Текстовые данные формы: " + key + " = " + String.join(", ", values));
-//            }
-//
-//            // Вызываем метод для обработки ответа устройства
-//            return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId, deviceId, webSocketProxyHandler, myWebsocketUtils);
-//
-//        } catch (Exception e) {
-//            e.printStackTrace();
-//            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-//                    .body(("Error occurred: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
-//        }
-//    }
-
-
-
-//@PostMapping(
-//        value = "p/{deviceId}/**",
-//        consumes = {
-//                "multipart/form-data"
-//        }
-//)
-//public ResponseEntity<byte[]> proxyMultipartPostRequest(@PathVariable String deviceId,
-//                                                        MultipartHttpServletRequest request) {
-//    WebSocketSession deviceSession = deviceSessionManager.getSession(deviceId);
-//    if (deviceSession == null || !deviceSession.isOpen()) {
-//        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
-//    }
-//
-//    try {
-//        // Формируем HTTP-запрос и получаем его вместе с requestId
-//        Map<String, String> httpRequestMap = httpRequest.buildHttpRequest(request, deviceId);
-//        // Извлекаем requestId и сам запрос из мапы
-//        String requestId = httpRequestMap.keySet().iterator().next();
-//        String httpRequest = httpRequestMap.get(requestId);
-//
-//        MyLogger.logServer("requestPath: [ " + httpRequest.split("\n")[0] + "]");
-//        MyLogger.logServer("httpRequest: [" + httpRequest + "]");
-//
-//        // Отправляем запрос устройству через WebSocket
-//        myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
-//
-//        // Обрабатываем multipart-данные
-//        for (Map.Entry<String, MultipartFile> entry : request.getFileMap().entrySet()) {
-//            MultipartFile file = entry.getValue();
-//            String fileName = file.getOriginalFilename();
-//            InputStream inputStream = file.getInputStream();
-//
-//            MyLogger.logServer("Обрабатываем файл: " + fileName);
-//
-//            // Читаем первые байты файла
-//            byte[] initialBuffer = new byte[WebSocketConfig.BUFFER_SIZE];
-//            int bytesRead = inputStream.read(initialBuffer);
-//
-//            if (bytesRead == -1) {
-//                MyLogger.logServer("Файл пустой: " + fileName, true);
-//                continue;
-//            }
-//
-//            boolean shouldCompress = myWebsocketUtils.shouldCompress(file.getContentType(), bytesRead, request.getRequestURI());
-//
-//            if (shouldCompress) {
-//                byte[] compressedData = MyWebsocketUtils.compressData(initialBuffer);
-//                MyLogger.logServer("Файл сжат (GZIP), размер: " + compressedData.length + " байт");
-//                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, compressedData, true, true);
-//
-//                // Если файл больше буфера, отправляем оставшиеся части
-//                if (bytesRead == WebSocketConfig.BUFFER_SIZE) {
-//                    myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, true);
-//                }
-//            } else {
-//                MyLogger.logServer("Файл отправляется потоком без сжатия");
-//                myWebsocketUtils.sendBinaryMessage(deviceSession, requestId, initialBuffer, false, false);
-//                myWebsocketUtils.sendChunkInputStream(deviceSession, requestId, inputStream, false);
-//            }
-//
-//            inputStream.close();
-//        }
-//
-//        // Обрабатываем текстовые данные формы (если есть)
-//        Map<String, String[]> formData = request.getParameterMap();
-//        for (Map.Entry<String, String[]> entry : formData.entrySet()) {
-//            String key = entry.getKey();
-//            String[] values = entry.getValue();
-//            MyLogger.logServer("Текстовые данные формы: " + key + " = " + String.join(", ", values));
-//        }
-//
-//        // Вызываем метод для обработки ответа устройства
-//        return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId, deviceId, webSocketProxyHandler, myWebsocketUtils);
-//
-//    } catch (Exception e) {
-//        e.printStackTrace();
-//        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-//                .body(("Error occurred: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
-//    }
-//}
 
 }
 

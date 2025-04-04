@@ -7,6 +7,7 @@ import com.example.websocketproxy.websocket.WebSocketProxyHandler;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -191,8 +192,10 @@ public class HttpResponse {
         CompletableFuture<String> textResponseFuture = webSocketProxyHandler.waitForResponse(requestId);
         //ассинхронно дожидаемся получения всех данных по отправленному с контроллера запроса
 
-        String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
-//        String textResponse = textResponseFuture.get();
+//        String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
+        String textResponse = textResponseFuture.get();
+        //здесь я имею первые заголовки ответа по которым можно сказать какие методы сжатия поддерживает устройство
+
 
         // Извлекаем заголовки и тело текстового ответа
 
@@ -259,6 +262,14 @@ public class HttpResponse {
             responseHeaders.setContentLength(newContentLength);
 //            responseHeaders.remove("Content-Length");
 //            responseHeaders.set("Transfer-Encoding", "chunked");
+
+
+
+
+
+
+
+
 
             return ResponseEntity.ok()
                     .headers(responseHeaders)
