@@ -13,6 +13,7 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 public class HttpUtils {
@@ -65,8 +66,20 @@ public class HttpUtils {
         // Теперь pathAfterDeviceId содержит оставшуюся часть пути после deviceId
     }
 
-    //метод формирует HTTP-запрос (httpRequest)
-    public Map<String, String> buildHttpRequest(HttpServletRequest request, String deviceId, String sessionId) throws Exception {
+    //перегруженный метод который создаёт заголовок после ответа, например после редиректа 302
+    public HashMap<String, String> buildHttpRequest(HashMap<String, String> buildHttpRequest, String setCookie) throws Exception {
+        String requestId = buildHttpRequest.keySet().iterator().next();
+        String renewRequset = buildHttpRequest.get(requestId);
+        StringBuilder requestBuilder = new StringBuilder(renewRequset);
+        requestBuilder.append("Set-Cookie: ").append(requestId).append("\n");
+
+        buildHttpRequest.put(requestId,requestBuilder.toString());
+
+        return buildHttpRequest;
+    }
+
+        //метод формирует HTTP-запрос (httpRequest)
+    public HashMap<String, String> buildHttpRequest(HttpServletRequest request, String deviceId, String sessionId) throws Exception {
         // Генерация уникального requestId для каждого запроса пользователя
         String requestId = this.generateRequestId(deviceId);
 
@@ -94,7 +107,7 @@ public class HttpUtils {
         requestBuilder.append("\n");
 
         // Создаем мапу и помещаем туда пару ключ-значение
-        Map<String, String> httpRequestMap = new HashMap<>();
+        HashMap<String, String> httpRequestMap = new HashMap<>();
         httpRequestMap.put(requestId, requestBuilder.toString());
 
 

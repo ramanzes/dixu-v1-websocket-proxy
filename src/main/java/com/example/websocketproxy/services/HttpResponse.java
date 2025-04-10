@@ -7,8 +7,11 @@ import com.example.websocketproxy.websocket.WebSocketProxyHandler;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 
+import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +19,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static com.example.websocketproxy.services.MyWebsocketUtils.decompress;
+import static java.lang.Integer.*;
 
 @Component
 public class HttpResponse {
@@ -57,8 +61,9 @@ public class HttpResponse {
             String[] statusParts = statusLine.split(" ");
             if (statusParts.length >= 2) {
                 try {
+                    return whatStatusCode(statusParts);
                     // Возвращаем код ответа (второй элемент)
-                    return Integer.parseInt(statusParts[1]);
+//                    return parseInt(statusParts[1]);
                 } catch (NumberFormatException e) {
                     // Обработка ошибки, если код не может быть преобразован в int
                     e.printStackTrace();
@@ -69,6 +74,16 @@ public class HttpResponse {
         return -1;
     }
 
+    protected static Integer whatStatusCode(String[] status){
+        for (int i = 0; i < status.length; i++) {
+            try {
+                return Integer.parseInt(status[i]);
+            } catch (NumberFormatException e) {
+                // Игнорируем, если строка не может быть преобразована в число
+            }
+        }
+        return null;
+    }
 
     // Метод для извлечения тела
     public static String extractBody(String textResponse) {
@@ -184,7 +199,30 @@ public class HttpResponse {
         return modifiedContent.toString();
     }
 
+    //проверка статусов ответа на редиректность
 
+
+private boolean isThisRedirect(int statusCode){
+/**
+Кроме этих основных кодов, существуют и другие коды 3xx, но они менее распространены:
+300 Multiple Choices: Указывает, что существует несколько вариантов ресурса, и клиент должен выбрать один из них.
+301 Moved Permanently: Указывает, что ресурс был перемещен на постоянной основе на новый URL.
+302 Found: Указывает, что ресурс временно доступен по другому URL.
+303 See Other: Указывает, что клиент должен сделать GET-запрос по другому URL.
+307 Temporary Redirect: Указывает, что ресурс временно доступен по другому URL, и клиент должен использовать тот же метод для нового запроса.
+308 Permanent Redirect: Указывает, что ресурс был перемещен на постоянной основе, и клиент должен использовать тот же метод для нового запроса.
+Важно отметить, что не все браузеры и клиенты могут обрабатывать все коды 3xx одинаково, и поведение может варьироваться в зависимости от реализации.
+*/
+    HashSet<Integer> setStatuses = new HashSet<>();
+    setStatuses.add(300);
+    setStatuses.add(301);
+    setStatuses.add(302);
+    setStatuses.add(303);
+    setStatuses.add(307);
+    setStatuses.add(308);
+    if (setStatuses.contains(statusCode)) return true;
+    return false;
+}
 
     //метод для обработки ответа устройства
     public ResponseEntity<?> processDeviceResponse(String requestId, WebSocketProxyHandler webSocketProxyHandler, MyWebsocketUtils myWebsocketUtils) throws Exception {
@@ -192,6 +230,7 @@ public class HttpResponse {
         CompletableFuture<String> textResponseFuture = webSocketProxyHandler.waitForResponse(requestId);
         //ассинхронно дожидаемся получения всех данных по отправленному с контроллера запроса
 
+        //на проде нужно добавить этот лимит ожидания!!!!
 //        String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
         String textResponse = textResponseFuture.get();
         //здесь я имею первые заголовки ответа по которым можно сказать какие методы сжатия поддерживает устройство
@@ -235,7 +274,7 @@ public class HttpResponse {
 
         //!!! разобраться с кэшированными данными и их безошибочным проксированием
 //        if (responseTextBody.length() == 0 && statusCode != 304 && statusCode != 204 && statusCode != 205) {
-        if (responseTextBody.length() == 0) {
+        if (responseTextBody.length() == 0 && !isThisRedirect(statusCode)) {
             MyLogger.logServer("Ответ содержит только заголовки." + " значит ждём и бинарные данные");
             // Получаем бинарные данные для того же запроса
             CompletableFuture<byte[]> binaryResponseFuture = webSocketProxyHandler.waitForBinaryResponse(requestId);
@@ -260,20 +299,27 @@ public class HttpResponse {
             int newContentLength = bodyBytes.length;
 
             responseHeaders.setContentLength(newContentLength);
+
+            // Получаем первое значение заголовка Location
+            List<String> locationValues = responseHeaders.get(HttpHeaders.LOCATION);
+            String location = (locationValues != null && !locationValues.isEmpty()) ? locationValues.get(0) : "";
+
+            responseHeaders.setLocation(URI.create("/p/"+deviceId+location));
 //            responseHeaders.remove("Content-Length");
 //            responseHeaders.set("Transfer-Encoding", "chunked");
 
 
 
+//вот здесь нужно изменять заголовки редиректа 302 и вообще чтобы был редирект
 
 
 
 
-
-
-            return ResponseEntity.ok()
+// Универсальное решение, сохраняющее оригинальный статус-код
+            return ResponseEntity.status(statusCode)
                     .headers(responseHeaders)
                     .body(updateBody.getBytes(StandardCharsets.UTF_8));
+
         } else {
             try {
                 MyLogger.logServer("Возвращаем бинарный ответ от клиента, contentType: " + contentType, true);
@@ -318,11 +364,15 @@ public class HttpResponse {
                     MyLogger.logServer("размер после распаковки без заголовков Content-Length "+String.valueOf(textBytes.length));
                     MyLogger.logServer("размер после распаковки с заголовками Content-Length "+contentLength);
 
-                    return ResponseEntity.ok()
+
+
+
+                    return ResponseEntity.status(statusCode)
                             .headers(responseHeaders)
                             .body(textBytes);
                 } else {
-                    return ResponseEntity.ok()
+
+                    return ResponseEntity.status(statusCode)
                             .headers(responseHeaders)
                             .contentType(mediaType)
                             .body((byte[]) body);

@@ -20,6 +20,9 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
    private static int BUFFER_SIZE;
    private static int COMPRESSMINSIZE;
    private static boolean DEBUG;
+
+
+
    private final ProxyWebSocketHandler proxyWebSocketHandler;
    private final WebSocketProxyHandler webSocketProxyHandler;
 
@@ -35,7 +38,9 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
         return COMPRESSMINSIZE;
     }
 
+
     public WebSocketConfig(ProxyWebSocketHandler proxyWebSocketHandler, WebSocketProxyHandler webSocketProxyHandler) {
+
         this.proxyWebSocketHandler = proxyWebSocketHandler;
         this.webSocketProxyHandler = webSocketProxyHandler;
 
