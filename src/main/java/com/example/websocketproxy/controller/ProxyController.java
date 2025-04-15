@@ -1,6 +1,7 @@
 package com.example.websocketproxy.controller;
 
 import com.example.websocketproxy.config.WebSocketConfig;
+import com.example.websocketproxy.repository.UserSession;
 import com.example.websocketproxy.repository.UsersSessionManager;
 import com.example.websocketproxy.services.*;
 import com.example.websocketproxy.services.HttpRequest;
@@ -52,7 +53,8 @@ public class ProxyController {
         this.myWebsocketUtils = new MyWebsocketUtils(this.deviceSessionManager);
         this.httpRequest = httpRequest;
         this.httpResponse = httpResponse;
-        this.httpUtils = new HttpUtils(this.deviceSessionManager);
+//        this.httpUtils = new HttpUtils(this.deviceSessionManager);
+        this.httpUtils = new HttpUtils();
     }
 
 
@@ -64,7 +66,7 @@ public class ProxyController {
 public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
                                            HttpServletRequest request, HttpSession session)  // Получаем HTTP-сессию пользователя
  {
-    WebSocketSession deviceSession = deviceSessionManager.getSessionForThisDevice(deviceId);
+    final WebSocketSession deviceSession = deviceSessionManager.getSessionForThisDevice(deviceId);
 
     if (deviceSession == null || !deviceSession.isOpen()) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body("Device is not connected".getBytes(StandardCharsets.UTF_8));
@@ -88,11 +90,13 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
        // !! проследить где мы освобождаем память от этого запроса после использования... т.е. получения полностью ответа
         String requestId = httpRequestMap.keySet().iterator().next();
 
-        UsersSessionManager usersSessionManager = httpUtils.getUsersSessionManager();
+        final UsersSessionManager usersSessionManager = httpUtils.getUsersSessionManager();
         //связываем запрос с клиентской сессией
         //!! также нужно будет освободиться от этого запроса после ответа
         usersSessionManager.addRequestToSession(sessionId,requestId);
 
+        usersSessionManager.getUserSession(sessionId).setUserMethodCompress(httpUtils.getSupportedCompressionMethods(request));
+        UserSession userSession = usersSessionManager.getUserSession(sessionId);
         //если это вообще первый запрос от клиента, то нужно понять какие методы сжатия поддерживает его браузер
 
 
@@ -111,7 +115,9 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
         myWebsocketUtils.sendMessage(deviceSession, new TextMessage(httpRequest));
 
         // Вызываем метод для обработки ответа устройства
-        return (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,webSocketProxyHandler,myWebsocketUtils);
+        ResponseEntity<byte[]> response = (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,webSocketProxyHandler,myWebsocketUtils);
+
+        return response;
 
     } catch (Exception e) {
         e.printStackTrace();
@@ -243,150 +249,10 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
 
 
 
-    /**
-     * Обрабатывает ответ от локального сервера и при необходимости обновляет URL в браузере
-     * сохраняя базовый путь прокси (/p/device-XXX) и добавляя к нему новый путь из заголовка
-     */
-    public ResponseEntity<?> processDeviceResponse(ResponseEntity<?> response) {
-        // Сначала выведем все заголовки для диагностики
-        debugHeaders(response.getHeaders());
 
-        // Проверяем наличие заголовка X-Request-URL и получаем его значение
-        String newUrl = extractRequestUrl(response.getHeaders());
 
-        // Если найден заголовок X-Request-URL и ответ содержит HTML
-        if (newUrl != null &&
-                response.getHeaders().getContentType() != null &&
-                response.getHeaders().getContentType().includes(MediaType.TEXT_HTML)) {
 
-            byte[] responseBody = (byte[]) response.getBody();
-            if (responseBody == null) {
-                return response; // Если тело ответа пустое, возвращаем как есть
-            }
 
-            // Преобразуем тело ответа в строку
-            String html = new String(responseBody, StandardCharsets.UTF_8);
-
-            // Получаем относительный путь из полного URL
-            String relPath = getPartUrl(newUrl);
-
-            // Формируем JavaScript для обновления URL с сохранением базового пути прокси
-            String script = createUrlUpdateScript(relPath);
-
-            // Добавляем скрипт перед закрывающим тегом </body>
-            if (html.contains("</body>")) {
-                html = html.replace("</body>", script + "</body>");
-            } else {
-                // Если тег </body> не найден, добавляем скрипт в конец документа
-                html = html + script;
-            }
-
-            // Возвращаем модифицированный ответ
-            return ResponseEntity.status(response.getStatusCode())
-                    .headers(response.getHeaders())
-                    .body(html.getBytes(StandardCharsets.UTF_8));
-        }
-
-        // Если не требуется изменение URL или формат не HTML, возвращаем исходный ответ
-        return response;
-    }
-
-    /**
-     * Извлекает URL из заголовков ответа
-     */
-    private String extractRequestUrl(HttpHeaders headers) {
-        String newUrl = null;
-
-        // Сначала пробуем стандартное имя заголовка
-        if (headers.containsKey("X-Request-URL")) {
-            newUrl = headers.getFirst("X-Request-URL");
-        } else {
-            // Если не найдено, ищем по частичному совпадению (нестрогий поиск)
-            for (String headerName : headers.keySet()) {
-                if (headerName.toLowerCase().contains("x-request-url")) {
-                    newUrl = headers.getFirst(headerName);
-                    break;
-                }
-            }
-        }
-
-        // Обрабатываем случай, когда значение начинается с ": "
-        if (newUrl != null && newUrl.startsWith(": ")) {
-            newUrl = newUrl.substring(2);
-        }
-
-        return newUrl;
-    }
-
-    /**
-     * Создает JavaScript для обновления URL в браузере
-     */
-    private String createUrlUpdateScript(String relPath) {
-        return "<script>\n" +
-                "  // Получаем текущий URL\n" +
-                "  let currentUrl = window.location.href;\n" +
-                "  // Удаляем завершающий слеш, если есть\n" +
-                "  if (currentUrl.endsWith('/') && currentUrl.length > 1) {\n" +
-                "    currentUrl = currentUrl.slice(0, -1);\n" +
-                "  }\n" +
-                "  // Находим базовый URL прокси\n" +
-                "  let baseUrl = currentUrl;\n" +
-                "  // Формат URL: https://localhost:8443/p/device-XXXX\n" +
-                "  if (baseUrl.indexOf('/p/') > -1) {\n" +
-                "    // Разбиваем URL по сегменту '/p/'\n" +
-                "    let parts = baseUrl.split('/p/');\n" +
-                "    if (parts.length > 1) {\n" +
-                "      // Берем первый сегмент после '/p/' (device-XXXX)\n" +
-                "      let deviceSegment = parts[1].split('/')[0];\n" +
-                "      // Собираем базовый URL: протокол + хост + '/p/' + deviceId\n" +
-                "      baseUrl = parts[0] + '/p/' + deviceSegment;\n" +
-                "    }\n" +
-                "  }\n" +
-                "  // Убеждаемся, что путь начинается с '/'\n" +
-                "  let newPath = '" + relPath + "';\n" +
-                "  if (!newPath.startsWith('/')) {\n" +
-                "    newPath = '/' + newPath;\n" +
-                "  }\n" +
-                "  // Добавляем новый путь к базовому URL\n" +
-                "  const newUrl = baseUrl + newPath;\n" +
-                "  // Обновляем URL в браузере без перезагрузки страницы\n" +
-                "  window.history.pushState({}, '', newUrl);\n" +
-                "  console.log('URL обновлен на: ' + newUrl);\n" +
-                "</script>";
-    }
-
-    /**
-     * Извлекает относительный путь из полного URL
-     */
-    public String getPartUrl(String fullUrl) {
-        String relativePath = "";
-        if (fullUrl != null) {
-            try {
-                URL url = new URL(fullUrl);
-                relativePath = url.getPath(); // Получаем только путь без домена
-
-                // Добавляем query параметры, если они есть
-                if (url.getQuery() != null && !url.getQuery().isEmpty()) {
-                    relativePath += "?" + url.getQuery();
-                }
-            } catch (MalformedURLException e) {
-                // Обработка ошибки
-                System.err.println("Неверный формат URL: " + e.getMessage());
-            }
-        }
-        return relativePath;
-    }
-
-    /**
-     * Выводит все заголовки для диагностики
-     */
-    private void debugHeaders(HttpHeaders headers) {
-        System.out.println("---- DEBUG: Response Headers ----");
-        for (String headerName : headers.keySet()) {
-            System.out.println(headerName + " = " + headers.get(headerName));
-        }
-        System.out.println("--------------------------------");
-    }
 
 
 
@@ -470,3 +336,157 @@ public ResponseEntity<byte[]> proxyPostSimpleRequest(@PathVariable String device
 
 
 
+//--------------------------------------------
+//
+//
+///**
+// * РАБОЧАЯ СВЯЗКА ДОБАВЛЕНИЯ СОБСТВЕННОГО СКРИПТА В ТЕЛО ПРОКСИРУЕМОГО ОТВЕТА В ДАННОМ СЛУЧАЕ НЕ НУЖНЫЙ ФУКНЦИОНАЛ ОТ ПРОШЛОЙ ВЕТКИ МЫСЛИ
+// * ОСТАЛИСЬ БЕЗ ПРИМЕНЕНИЯ. НО ОН САМ СКРИПТ МОЖЕТ БЫТЬ ЛЮБЫМ
+// * ИСПОЛЬЗОВАЛСЯ В КОНТРОЛЛЕРЕ ПЕРЕД return response;
+// *
+// *
+// *
+// * Обрабатывает ответ от локального сервера и при необходимости обновляет URL в браузере
+// * сохраняя базовый путь прокси (/p/device-XXX) и добавляя к нему новый путь из заголовка
+// */
+//public ResponseEntity<?> processDeviceResponse(ResponseEntity<?> response) {
+//    // Сначала выведем все заголовки для диагностики
+//    debugHeaders(response.getHeaders());
+//
+//    // Проверяем наличие заголовка X-Request-URL и получаем его значение
+//    String newUrl = extractRequestUrl(response.getHeaders());
+//
+//    // Если найден заголовок X-Request-URL и ответ содержит HTML
+//    if (newUrl != null &&
+//            response.getHeaders().getContentType() != null &&
+//            response.getHeaders().getContentType().includes(MediaType.TEXT_HTML)) {
+//
+//        byte[] responseBody = (byte[]) response.getBody();
+//        if (responseBody == null) {
+//            return response; // Если тело ответа пустое, возвращаем как есть
+//        }
+//
+//        // Преобразуем тело ответа в строку
+//        String html = new String(responseBody, StandardCharsets.UTF_8);
+//
+//        // Получаем относительный путь из полного URL
+//        String relPath = getPartUrl(newUrl);
+//
+//        // Формируем JavaScript для обновления URL с сохранением базового пути прокси
+//        String script = createUrlUpdateScript(relPath);
+//
+//        // Добавляем скрипт перед закрывающим тегом </body>
+//        if (html.contains("</body>")) {
+//            html = html.replace("</body>", script + "</body>");
+//        } else {
+//            // Если тег </body> не найден, добавляем скрипт в конец документа
+//            html = html + script;
+//        }
+//
+//        // Возвращаем модифицированный ответ
+//        return ResponseEntity.status(response.getStatusCode())
+//                .headers(response.getHeaders())
+//                .body(html.getBytes(StandardCharsets.UTF_8));
+//    }
+//
+//    // Если не требуется изменение URL или формат не HTML, возвращаем исходный ответ
+//    return response;
+//}
+//
+///**
+// * Извлекает URL из заголовков ответа
+// */
+//private String extractRequestUrl(HttpHeaders headers) {
+//    String newUrl = null;
+//
+//    // Сначала пробуем стандартное имя заголовка
+//    if (headers.containsKey("X-Request-URL")) {
+//        newUrl = headers.getFirst("X-Request-URL");
+//    } else {
+//        // Если не найдено, ищем по частичному совпадению (нестрогий поиск)
+//        for (String headerName : headers.keySet()) {
+//            if (headerName.toLowerCase().contains("x-request-url")) {
+//                newUrl = headers.getFirst(headerName);
+//                break;
+//            }
+//        }
+//    }
+//
+//    // Обрабатываем случай, когда значение начинается с ": "
+//    if (newUrl != null && newUrl.startsWith(": ")) {
+//        newUrl = newUrl.substring(2);
+//    }
+//
+//    return newUrl;
+//}
+//
+///**
+// * Создает JavaScript для обновления URL в браузере
+// */
+//private String createUrlUpdateScript(String relPath) {
+//    return "<script>\n" +
+//            "  // Получаем текущий URL\n" +
+//            "  let currentUrl = window.location.href;\n" +
+//            "  // Удаляем завершающий слеш, если есть\n" +
+//            "  if (currentUrl.endsWith('/') && currentUrl.length > 1) {\n" +
+//            "    currentUrl = currentUrl.slice(0, -1);\n" +
+//            "  }\n" +
+//            "  // Находим базовый URL прокси\n" +
+//            "  let baseUrl = currentUrl;\n" +
+//            "  // Формат URL: https://localhost:8443/p/device-XXXX\n" +
+//            "  if (baseUrl.indexOf('/p/') > -1) {\n" +
+//            "    // Разбиваем URL по сегменту '/p/'\n" +
+//            "    let parts = baseUrl.split('/p/');\n" +
+//            "    if (parts.length > 1) {\n" +
+//            "      // Берем первый сегмент после '/p/' (device-XXXX)\n" +
+//            "      let deviceSegment = parts[1].split('/')[0];\n" +
+//            "      // Собираем базовый URL: протокол + хост + '/p/' + deviceId\n" +
+//            "      baseUrl = parts[0] + '/p/' + deviceSegment;\n" +
+//            "    }\n" +
+//            "  }\n" +
+//            "  // Убеждаемся, что путь начинается с '/'\n" +
+//            "  let newPath = '" + relPath + "';\n" +
+//            "  if (!newPath.startsWith('/')) {\n" +
+//            "    newPath = '/' + newPath;\n" +
+//            "  }\n" +
+//            "  // Добавляем новый путь к базовому URL\n" +
+//            "  const newUrl = baseUrl + newPath;\n" +
+//            "  // Обновляем URL в браузере без перезагрузки страницы\n" +
+//            "  window.history.pushState({}, '', newUrl);\n" +
+//            "  console.log('URL обновлен на: ' + newUrl);\n" +
+//            "</script>";
+//}
+//
+///**
+// * Извлекает относительный путь из полного URL
+// */
+//public String getPartUrl(String fullUrl) {
+//    String relativePath = "";
+//    if (fullUrl != null) {
+//        try {
+//            URL url = new URL(fullUrl);
+//            relativePath = url.getPath(); // Получаем только путь без домена
+//
+//            // Добавляем query параметры, если они есть
+//            if (url.getQuery() != null && !url.getQuery().isEmpty()) {
+//                relativePath += "?" + url.getQuery();
+//            }
+//        } catch (MalformedURLException e) {
+//            // Обработка ошибки
+//            System.err.println("Неверный формат URL: " + e.getMessage());
+//        }
+//    }
+//    return relativePath;
+//}
+//
+///**
+// * Выводит все заголовки для диагностики
+// */
+//private void debugHeaders(HttpHeaders headers) {
+//    System.out.println("---- DEBUG: Response Headers ----");
+//    for (String headerName : headers.keySet()) {
+//        System.out.println(headerName + " = " + headers.get(headerName));
+//    }
+//    System.out.println("--------------------------------");
+//}
+//

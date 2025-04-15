@@ -114,7 +114,7 @@ public class HttpResponse {
     /**
      * Модифицирует пути в HTML, CSS и JS контенте, добавляя префикс "/p/{deviceid}/" к ссылкам.
      */
-    public static String modifyHtmlPaths(String content, String contentType, String diviceId) {
+    public static String modifyHtmlPaths(String content, String contentType, String deviceId) {
         // Определяем, какой тип контента обрабатываем
         boolean isHtml = contentType.startsWith("text/html");
         boolean isCss = contentType.startsWith("text/css");
@@ -136,16 +136,16 @@ public class HttpResponse {
 
         // Если это HTML, обрабатываем его как HTML, CSS и JS
         if (isHtml) {
-            content = applyRegex(content, htmlRegex, "html",diviceId);
-            content = applyRegex(content, cssRegex, "css",diviceId);
-            content = applyRegex(content, jsVarRegex, "js-var",diviceId);
+            content = applyRegex(content, htmlRegex, "html",deviceId);
+            content = applyRegex(content, cssRegex, "css",deviceId);
+            content = applyRegex(content, jsVarRegex, "js-var",deviceId);
 //            content = applyRegex(content, jsRegex, "js");
         } else if (isCss) {
             // Если это CSS, обрабатываем только CSS
-            content = applyRegex(content, cssRegex, "css",diviceId);
+            content = applyRegex(content, cssRegex, "css",deviceId);
         } else if (isJs) {
             // Если это JS, обрабатываем только JS
-            content = applyRegex(content, jsRegex, "js",diviceId);
+            content = applyRegex(content, jsRegex, "js",deviceId);
         }
 
         return content;
@@ -287,7 +287,7 @@ private boolean isThisRedirect(int statusCode){
             // Текстовый ответ
             MyLogger.logServer("возвращаем текстовый ответ от клиента");
 
-            int headerLength = responseHeaders.toString().getBytes().length;
+//            int headerLength = responseHeaders.toString().getBytes().length;
             String updateBody = HttpResponse.modifyHtmlPaths(responseTextBody, contentType, deviceId);
 
             //в кодировке UTF-8 некоторые символы (например, символы из других языков или специальные символы) могут занимать более одного байта.

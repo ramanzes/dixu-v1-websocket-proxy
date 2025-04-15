@@ -14,11 +14,13 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 @Component
 public class HttpUtils {
-   private DeviceSessionManager deviceSessionManager;
 
+    //singleton
+   private final DeviceSessionManager deviceSessionManager = DeviceSessionManager.getInstance();
     //singleton
     private final UsersSessionManager usersSessionManager = UsersSessionManager.getInstance();
 
@@ -26,10 +28,12 @@ public class HttpUtils {
         return usersSessionManager;
     }
 
-    public HttpUtils(DeviceSessionManager deviceSessionManager) {
-        this.deviceSessionManager = deviceSessionManager;
-    }
+//    public HttpUtils(DeviceSessionManager deviceSessionManager) {
+//        this.deviceSessionManager = deviceSessionManager;
+//    }
 
+    public HttpUtils() {
+    }
     public DeviceSessionManager getDeviceSessionManager() {
         return deviceSessionManager;
     }
@@ -78,6 +82,12 @@ public class HttpUtils {
         return buildHttpRequest;
     }
 
+
+
+
+
+
+
         //метод формирует HTTP-запрос (httpRequest)
     public HashMap<String, String> buildHttpRequest(HttpServletRequest request, String deviceId, String sessionId) throws Exception {
         // Генерация уникального requestId для каждого запроса пользователя
@@ -91,6 +101,8 @@ public class HttpUtils {
         requestBuilder.append(request.getMethod()).append(" ");
         // Добавляем путь и query parameters (если есть)
         String queryString = request.getQueryString(); // Получаем query parameters
+
+       ///!!!проверить как формируются гет параметры здесь!!!особенно множественные со знаком &
         String fullPath = requestPath + (queryString != null ? "?" + queryString : "");
         requestBuilder.append(fullPath).append(" HTTP/1.1\n");
         // Добавляем requestId в заголовки
@@ -163,6 +175,23 @@ public class HttpUtils {
 
 
 
+
+
+
+    public static Set<String> getSupportedCompressionMethods(HttpServletRequest request) {
+        String acceptEncodingHeader = request.getHeader("Accept-Encoding");
+        if (acceptEncodingHeader == null || acceptEncodingHeader.isEmpty()) {
+            return Collections.emptySet();
+        }
+
+        // Разделяем заголовок по запятым и удаляем пробелы
+        String[] encodings = acceptEncodingHeader.split("\\s*,\\s*");
+
+        // Преобразуем в список и удаляем параметры качества (например, gzip;q=0.8)
+        return Arrays.stream(encodings)
+                .map(encoding -> encoding.split(";")[0].trim().toLowerCase())
+                .collect(Collectors.toSet());
+    }
 
 
 }

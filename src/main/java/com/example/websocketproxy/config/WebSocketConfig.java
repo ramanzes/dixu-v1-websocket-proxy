@@ -82,7 +82,6 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
         // Регистрируем ProxyWebSocketHandler на /proxy-ws
         registry.addHandler(proxyWebSocketHandler, "/proxy-ws")
                 .setAllowedOrigins("*"); // Разрешаем запросы с любых доменов
-
         // Регистрируем WebSocketProxyHandler на /device-ws
         registry.addHandler(webSocketProxyHandler, "/ws")
                 .setAllowedOrigins("*");  // Разрешаем запросы с любых доменов

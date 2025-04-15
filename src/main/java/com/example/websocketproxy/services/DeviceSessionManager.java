@@ -1,6 +1,7 @@
 package com.example.websocketproxy.services;
 
 import com.example.websocketproxy.repository.Devices;
+import com.example.websocketproxy.repository.UsersSessionManager;
 import com.example.websocketproxy.services.logsandexceptions.exceptions.DeviceWithThisIdIsInActiveSessionNow;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
@@ -8,11 +9,26 @@ import org.springframework.web.socket.WebSocketSession;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-
+//класс для устройств и сессий по вебсокету
 @Component
 public class DeviceSessionManager {
     //ключом является idDevice
 //    private final Map<String, WebSocketSession> deviceSessions = new ConcurrentHashMap<>();
+
+    private static DeviceSessionManager instance;
+
+    //конструктор вызывается один раз
+    public DeviceSessionManager() {}
+
+    // Статический метод для получения экземпляра класса
+    public static DeviceSessionManager getInstance() {
+        if (instance == null) {
+            instance = new DeviceSessionManager();
+        }
+        return instance;
+    }
+
+
     private final Map<String, Devices> deviceSessions = new ConcurrentHashMap<>();
 
     public void addDeviceWithSession(String deviceId, WebSocketSession session) {
@@ -40,7 +56,7 @@ public class DeviceSessionManager {
     }
 
     //получаем id устройства из параметров сессии
-    public String getDeviceIdFromThisSession(WebSocketSession session) {
+   final public String getDeviceIdFromThisSession(WebSocketSession session) {
         try {
             String query = session.getUri().getQuery();
             if (query != null && query.contains("deviceId=")) {
