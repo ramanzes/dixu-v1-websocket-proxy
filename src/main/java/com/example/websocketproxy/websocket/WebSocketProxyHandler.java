@@ -1,3 +1,14 @@
+
+
+
+
+
+
+
+
+
+
+
 package com.example.websocketproxy.websocket;
 
 import com.example.websocketproxy.services.DeviceSessionManager;
@@ -6,6 +17,10 @@ import com.example.websocketproxy.services.logsandexceptions.exceptions.DeviceWi
 import com.example.websocketproxy.services.logsandexceptions.exceptions.MyOtherExceptions;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.networknt.schema.JsonSchema;
+import com.networknt.schema.JsonSchemaFactory;
+import com.networknt.schema.SpecVersion;
+import com.networknt.schema.ValidationMessage;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -26,6 +41,9 @@ import java.util.concurrent.ConcurrentHashMap;
 //public class WebSocketProxyHandler extends TextWebSocketHandler  {
 public class WebSocketProxyHandler extends BinaryWebSocketHandler {
 
+    private final JsonSchema textMessageSchema;
+
+
     private final DeviceSessionManager deviceSessionManager;
     private final Map<String, CompletableFuture<String>> responseFutures = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<byte[]>> binaryResponseFutures = new ConcurrentHashMap<>();
@@ -41,6 +59,20 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
 
     public WebSocketProxyHandler(DeviceSessionManager deviceSessionManager) {
         this.deviceSessionManager = deviceSessionManager;
+
+        // Инициализация схемы JSON  // валидация получаемых данных
+        JsonSchemaFactory factory = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V7);
+        this.textMessageSchema = factory.getSchema("""
+            {
+              "type": "object",
+              "required": ["requestId", "data", "isLast"],
+              "properties": {
+                "requestId": {"type": "string"},
+                "data": {"type": "string"},
+                "isLast": {"type": "boolean"}
+              }
+            }""");
+
     }
 
 
@@ -95,6 +127,21 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
 
         MyLogger.logServer(payload.substring(0,49)+"...",true);
         try {
+
+            // Преобразуем строку в JsonNode для валидации
+            com.fasterxml.jackson.databind.JsonNode jsonNode =
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(payload);
+
+            // Проверяем соответствие схеме
+            Set<ValidationMessage> errors = textMessageSchema.validate(jsonNode);
+            if (!errors.isEmpty()) {
+                MyLogger.logServer("Invalid JSON format: " + errors);
+                session.sendMessage(new TextMessage(
+                        "Вы вероятно изменили клиентскую часть программы и она отправила JSON данные несоответствующие определённой схеме." + errors
+                ));
+                throw new MyOtherExceptions("полученные данные не соответствуют JSON схеме "+errors);
+            }
+
             // Парсим JSON
             JsonObject json = new Gson().fromJson(payload, JsonObject.class);
 
@@ -102,12 +149,21 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
             //пока не передаём в клиенте в  json этот параметр
 //            String cookies = json.get("cookies").getAsString();
 
+            // Валидация requestId на инъекции и допустимые символы
+            if (!isValidRequestId(requestId)) {
+                MyLogger.logServer("Invalid requestId format in text message: " + requestId, true);
+                session.sendMessage(new TextMessage("{\"error\":\"Invalid requestId format\"}"));
+                throw new MyOtherExceptions("Invalid requestId format in text message: " + requestId);
+            }
+
+
             String data = json.get("data").getAsString();
 
             String isLast = json.get("isLast").getAsString();
 
 
             // Обработка данных получаем все части в буфер(в мапу), с ключом для каждого id запроса
+            // Атомарная операция Добавит requestId с новым объектом SttringBuilder, если ключа requestId нет
             StringBuilder buffer = textMessageBuffers.computeIfAbsent(requestId, k -> new StringBuilder());
             buffer.append(data);
 
@@ -153,6 +209,12 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
                 }
             }
         } catch (Exception e) {
+            MyLogger.logServer("Error processing message: " + e.getMessage());
+            try {
+                session.sendMessage(new TextMessage("{\"error\":\"Error processing message\"}"));
+            } catch (IOException ioe) {
+                MyLogger.logServer("Failed to send error message: " + ioe.getMessage(), true);
+            }
             e.printStackTrace();
         }
     }
@@ -171,75 +233,70 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
     }
 
 
+    /**
+     * Проверяет requestId на соответствие допустимому формату.
+     * Разрешены только буквы, цифры, дефис, подчеркивание и точка.
+     */
+    private boolean isValidRequestId(String requestId) {
+        // Регулярное выражение для проверки допустимых символов
+        // Разрешаем только буквы, цифры, дефис, подчеркивание | и точку
+        String regex = "^[a-zA-Z0-9\\-_|\\.]+$";
 
-    //приём всех частей сообщения бинарного ответа
+        // Проверка на null или пустую строку
+        if (requestId == null || requestId.isEmpty()) {
+            return false;
+        }
 
-//    @Override
-//    public void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
-//        String deviceId = deviceSessionManager.getDeviceIdFromSession(session);
-//        if (deviceId == null) {
-//            MyLogger.logServer("Received message from unidentified session",true);
-//            return;
-//        }
-//        MyLogger.logServer("Начинаем приём бинарных сообщений от устройства [" + deviceId + "]",true);
-//
-//        ByteBuffer payload = message.getPayload();
-//        payload.rewind();
-//
-//        try {// Извлекаем длину requestId
-////            int requestIdLength = deviceId.length()+1+36+Integer.BYTES; //1+uuid
-//            // Читаем длину requestId
-//            int requestIdLength = payload.getInt(); // Извлекаем 4 байта длины requestId
-//
-//            byte[] requestIdBytes = new byte[requestIdLength];
-//            payload.get(requestIdBytes);
-//            String requestId = new String(requestIdBytes, StandardCharsets.UTF_8);
-//
-//            MyLogger.logServer(requestId,true);
-//            // Остальные данные
-//            byte[] data = new byte[payload.remaining()];
-//            payload.get(data);
-//
-//
-//
-//
-//            // Синхронизация на уровне requestId
-//            synchronized (getBufferLock(requestId)) {
-//                ByteArrayOutputStream buffer = byteMessageBuffers.computeIfAbsent(requestId, k -> new ByteArrayOutputStream());
-//                buffer.write(data);
-//
-//                if (message.isLast()) {
-//                    byte[] fullMessageBytes = buffer.toByteArray();
-//                    byteMessageBuffers.remove(requestId);
-//                    bufferLocks.remove(requestId); // Удаляем монитор
-//                    handleBinaryResponse(requestId, fullMessageBytes);
-//                }
-//            }
-//
-//
-////
-////            // Сохраняем фрагменты в буфер для каждого requestId
-////            ByteArrayOutputStream buffer = byteMessageBuffers.computeIfAbsent(requestId, k -> new ByteArrayOutputStream());
-////            buffer.write(data);
-////
-////            // Если это последний фрагмент, обрабатываем сообщение
-////            if (message.isLast()) {
-////                byte[] fullMessageBytes = buffer.toByteArray();
-//////                buffer.reset(); // Очищаем буфер
-////                byteMessageBuffers.remove(requestId); // Удаляем буфер для requestId
-////
-////                handleBinaryResponse(requestId, fullMessageBytes);
-////            }
-//        } catch (Exception e) {
-//            e.printStackTrace();
-//        }
-//    }
+        // Проверка на максимальную длину (дополнительная проверка)
+        if (requestId.length() > 255) {
+            return false;
+        }
+
+        // Проверка на соответствие шаблону
+        if (!requestId.matches(regex)) {
+            return false;
+        }
+
+        // Проверка на наличие путевых последовательностей
+        if (requestId.contains("..") || requestId.contains("/") || requestId.contains("\\")) {
+            return false;
+        }
+
+        return true;
+    }
 
     private String extractRequestId(ByteBuffer payload) {
+        // Проверяем, достаточно ли данных в буфере
+        if (payload.remaining() < 4) {
+            MyLogger.logServer("Invalid binary message: insufficient data for requestId length", true);
+            throw new IllegalArgumentException("Invalid binary message format: missing requestId length");
+        }
+
         int requestIdLength = payload.getInt(); // Извлекаем 4 байта длины requestId
+
+        // Проверяем на разумную длину requestId (предотвращение DoS)
+        if (requestIdLength <= 0 || requestIdLength > 1024) { // Максимальная длина - 1KB
+            MyLogger.logServer("Invalid requestIdLength: " + requestIdLength, true);
+            throw new IllegalArgumentException("Invalid requestId length: must be between 1 and 1024 bytes");
+        }
+
+        // Проверяем, достаточно ли данных в буфере для извлечения requestId
+        if (payload.remaining() < requestIdLength) {
+            MyLogger.logServer("Invalid binary message: insufficient data for requestId content", true);
+            throw new IllegalArgumentException("Invalid binary message format: incomplete requestId");
+        }
+
         byte[] requestIdBytes = new byte[requestIdLength];
         payload.get(requestIdBytes);
-        return new String(requestIdBytes, StandardCharsets.UTF_8);
+        String requestId = new String(requestIdBytes, StandardCharsets.UTF_8);
+        // Валидация requestId на инъекции и допустимые символы
+        if (!isValidRequestId(requestId)) {
+            MyLogger.logServer("Invalid requestId format: " + requestId, true);
+            throw new IllegalArgumentException("Invalid requestId format: contains disallowed characters");
+        }
+
+        return requestId;
+
     }
 
     private byte[] extractData(ByteBuffer payload) {
