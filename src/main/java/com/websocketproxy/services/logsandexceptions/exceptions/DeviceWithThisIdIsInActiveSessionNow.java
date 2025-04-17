@@ -1,4 +1,4 @@
-package com.example.websocketproxy.services.logsandexceptions.exceptions;
+package com.websocketproxy.services.logsandexceptions.exceptions;
 
 public class DeviceWithThisIdIsInActiveSessionNow extends RuntimeException{
     public DeviceWithThisIdIsInActiveSessionNow(){

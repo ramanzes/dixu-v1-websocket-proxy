@@ -1,12 +1,11 @@
-package com.example.websocketproxy.controller;
+package com.websocketproxy.controller;
 
-import com.example.websocketproxy.config.WebSocketConfig;
-import com.example.websocketproxy.repository.UserSession;
-import com.example.websocketproxy.repository.UsersSessionManager;
-import com.example.websocketproxy.services.*;
-import com.example.websocketproxy.services.HttpRequest;
-import com.example.websocketproxy.websocket.WebSocketProxyHandler;
-import com.example.websocketproxy.services.logsandexceptions.MyLogger;
+import com.websocketproxy.repository.UserSession;
+import com.websocketproxy.repository.UsersSessionManager;
+import com.websocketproxy.services.*;
+import com.websocketproxy.websocket.WebSocketProxyHandler;
+import com.websocketproxy.services.logsandexceptions.MyLogger;
+import com.websocketproxy.services.HttpRequest;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.http.*;
@@ -18,14 +17,12 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.*;
-import java.net.MalformedURLException;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 import java.util.Map;
 
-import static com.example.websocketproxy.config.WebSocketConfig.*;
+import static com.websocketproxy.config.WebSocketConfig.*;
 
 
 
@@ -41,7 +38,7 @@ public class ProxyController {
     private final DeviceSessionManager deviceSessionManager;
     private final WebSocketProxyHandler webSocketProxyHandler;
     private final MyWebsocketUtils myWebsocketUtils;
-    private final HttpRequest httpRequest;
+    private final com.websocketproxy.services.HttpRequest httpRequest;
     private final HttpResponse httpResponse;
     private final HttpUtils httpUtils;
 

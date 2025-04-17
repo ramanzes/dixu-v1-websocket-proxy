@@ -1,7 +1,7 @@
-package com.example.websocketproxy.services;
+package com.websocketproxy.services;
 
-import com.example.websocketproxy.repository.UsersSessionManager;
-import com.example.websocketproxy.services.logsandexceptions.MyLogger;
+import com.websocketproxy.repository.UsersSessionManager;
+import com.websocketproxy.services.logsandexceptions.MyLogger;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
@@ -13,7 +13,6 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Component

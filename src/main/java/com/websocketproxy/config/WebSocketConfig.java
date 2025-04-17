@@ -1,13 +1,10 @@
-package com.example.websocketproxy.config;
+package com.websocketproxy.config;
 
-import com.example.websocketproxy.services.logsandexceptions.exceptions.MyOtherExceptions;
-import com.example.websocketproxy.websocket.WebSocketProxyHandler;
-import com.example.websocketproxy.websocket.ProxyWebSocketHandler;
+import com.websocketproxy.services.logsandexceptions.exceptions.MyOtherExceptions;
+import com.websocketproxy.websocket.WebSocketProxyHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.servlet.config.annotation.CorsRegistry;
-import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.socket.config.annotation.*;
 
 import java.io.IOException;
@@ -23,7 +20,7 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
 
 
 
-   private final ProxyWebSocketHandler proxyWebSocketHandler;
+//   private final ProxyWebSocketHandler proxyWebSocketHandler;
    private final WebSocketProxyHandler webSocketProxyHandler;
 
     public static int getBUFFER_SIZE() {
@@ -39,9 +36,9 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
     }
 
 
-    public WebSocketConfig(ProxyWebSocketHandler proxyWebSocketHandler, WebSocketProxyHandler webSocketProxyHandler) {
+    public WebSocketConfig(WebSocketProxyHandler webSocketProxyHandler) {
 
-        this.proxyWebSocketHandler = proxyWebSocketHandler;
+//        this.proxyWebSocketHandler = proxyWebSocketHandler;
         this.webSocketProxyHandler = webSocketProxyHandler;
 
         Properties properties = new Properties();
@@ -80,8 +77,8 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         // Регистрируем ProxyWebSocketHandler на /proxy-ws
-        registry.addHandler(proxyWebSocketHandler, "/proxy-ws")
-                .setAllowedOrigins("*"); // Разрешаем запросы с любых доменов
+//        registry.addHandler(proxyWebSocketHandler, "/proxy-ws")
+//                .setAllowedOrigins("*"); // Разрешаем запросы с любых доменов
         // Регистрируем WebSocketProxyHandler на /device-ws
         registry.addHandler(webSocketProxyHandler, "/ws")
                 .setAllowedOrigins("*");  // Разрешаем запросы с любых доменов

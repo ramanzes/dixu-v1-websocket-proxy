@@ -1,20 +1,10 @@
-package com.example.websocketproxy.services;
+package com.websocketproxy.services;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
-import java.util.Enumeration;
-import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 
-import com.example.websocketproxy.services.logsandexceptions.MyLogger;
+import com.websocketproxy.services.logsandexceptions.MyLogger;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Component;
-import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.servlet.HandlerMapping;
 
 import java.util.concurrent.ConcurrentHashMap;
 import jakarta.servlet.http.Cookie;

@@ -1,6 +1,7 @@
-package com.example.websocketproxy.services.logsandexceptions;
+package com.websocketproxy.services.logsandexceptions;
 
-import com.example.websocketproxy.config.WebSocketConfig;
+import com.websocketproxy.config.WebSocketConfig;
+import com.websocketproxy.services.MyWebsocketUtils;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
@@ -10,8 +11,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import static com.example.websocketproxy.services.MyWebsocketUtils.decompressData;
 
 //import lombok.extern.slf4j.Slf4j;
 //@Slf4j
@@ -90,7 +89,7 @@ public class MyLogger {
 
     public static void logSrvDecodeUnGzip(byte[] data) throws IOException {
         // Распаковываем данные
-        byte[] decompressedData = decompressData(data);
+        byte[] decompressedData = MyWebsocketUtils.decompressData(data);
         logServByteToString(decompressedData);
     }
 

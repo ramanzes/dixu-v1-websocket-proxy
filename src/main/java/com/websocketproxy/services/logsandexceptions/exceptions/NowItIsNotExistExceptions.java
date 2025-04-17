@@ -1,4 +1,4 @@
-package com.example.websocketproxy.services.logsandexceptions.exceptions;
+package com.websocketproxy.services.logsandexceptions.exceptions;
 
 public class NowItIsNotExistExceptions extends RuntimeException{
     public NowItIsNotExistExceptions(){

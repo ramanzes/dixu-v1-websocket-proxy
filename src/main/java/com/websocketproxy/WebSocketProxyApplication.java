@@ -1,4 +1,4 @@
-package com.example.websocketproxy;
+package com.websocketproxy;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

@@ -1,4 +1,4 @@
-package com.example.websocketproxy.repository;
+package com.websocketproxy.repository;
 
 import java.util.HashSet;
 import java.util.Set;

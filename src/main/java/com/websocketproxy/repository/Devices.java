@@ -1,4 +1,4 @@
-package com.example.websocketproxy.repository;
+package com.websocketproxy.repository;
 
 import org.springframework.web.socket.WebSocketSession;
 

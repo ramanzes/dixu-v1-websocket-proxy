@@ -1,11 +1,12 @@
-package com.example.websocketproxy.services;
+package com.websocketproxy.services;
 
-import com.example.websocketproxy.repository.Devices;
-import com.example.websocketproxy.repository.UsersSessionManager;
-import com.example.websocketproxy.services.logsandexceptions.exceptions.DeviceWithThisIdIsInActiveSessionNow;
+import com.websocketproxy.repository.Devices;
+import com.websocketproxy.services.logsandexceptions.exceptions.DeviceWithThisIdIsInActiveSessionNow;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -55,12 +56,17 @@ public class DeviceSessionManager {
         return deviceSessions;
     }
 
-    //получаем id устройства из параметров сессии
-   final public String getDeviceIdFromThisSession(WebSocketSession session) {
+
+    final public String getDeviceIdFromThisSession(WebSocketSession session) {
         try {
             String query = session.getUri().getQuery();
-            if (query != null && query.contains("deviceId=")) {
-                return query.split("deviceId=")[1];
+            if (query != null) {
+                for (String param : query.split("&")) {
+                    String[] keyValue = param.split("=", 2);
+                    if (keyValue.length == 2 && keyValue[0].equals("deviceId")) {
+                        return URLDecoder.decode(keyValue[1], StandardCharsets.UTF_8);
+                    }
+                }
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -68,6 +74,43 @@ public class DeviceSessionManager {
         return null;
     }
 
+
+//    //получаем id устройства из параметров сессии
+//   final public String getDeviceIdFromThisSession(WebSocketSession session) {
+//        try {
+//            String query = session.getUri().getQuery();
+//            if (query != null && query.contains("deviceId=")) {
+//                // Получаем значение deviceId
+//                String deviceId_ = query.split("deviceId=")[1];
+//
+//                String deviceId = deviceId_.split("[?&]+$")[1];
+//                // Удаляем символы ? и & в конце строки
+//                deviceId = deviceId.replaceAll("[?&]+$", "");
+//                return deviceId;
+//
+//            }
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//        }
+//        return null;
+//    }
+
+    public String getTokenFromThisSession(WebSocketSession session) {
+        try {
+            String query = session.getUri().getQuery();
+            if (query != null) {
+                for (String param : query.split("&")) {
+                    String[] keyValue = param.split("=", 2);
+                    if (keyValue.length == 2 && keyValue[0].equals("token")) {
+                        return URLDecoder.decode(keyValue[1], StandardCharsets.UTF_8);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
 
 
 

@@ -1,16 +1,14 @@
-package com.example.websocketproxy.services;
+package com.websocketproxy.services;
 
-import com.example.websocketproxy.config.WebSocketConfig;
-import com.example.websocketproxy.services.logsandexceptions.MyLogger;
-import com.example.websocketproxy.services.logsandexceptions.exceptions.NowItIsNotExistExceptions;
+import com.websocketproxy.config.WebSocketConfig;
+import com.websocketproxy.services.logsandexceptions.MyLogger;
+import com.websocketproxy.services.logsandexceptions.exceptions.NowItIsNotExistExceptions;
 import com.github.luben.zstd.ZstdInputStream;
 import org.springframework.http.HttpHeaders;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;

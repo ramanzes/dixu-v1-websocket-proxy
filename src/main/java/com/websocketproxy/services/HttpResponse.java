@@ -1,14 +1,13 @@
-package com.example.websocketproxy.services;
+package com.websocketproxy.services;
 
-import com.example.websocketproxy.repository.Devices;
-import com.example.websocketproxy.services.logsandexceptions.MyLogger;
-import com.example.websocketproxy.services.logsandexceptions.exceptions.MyOtherExceptions;
-import com.example.websocketproxy.websocket.WebSocketProxyHandler;
+import com.websocketproxy.repository.Devices;
+import com.websocketproxy.services.logsandexceptions.MyLogger;
+import com.websocketproxy.websocket.WebSocketProxyHandler;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
-import java.net.URL;
+//import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.List;
@@ -18,8 +17,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static com.example.websocketproxy.services.MyWebsocketUtils.decompress;
-import static java.lang.Integer.*;
+import static com.websocketproxy.services.MyWebsocketUtils.decompress;
 
 @Component
 public class HttpResponse {
