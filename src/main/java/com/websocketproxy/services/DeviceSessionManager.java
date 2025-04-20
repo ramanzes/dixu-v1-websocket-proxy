@@ -75,25 +75,7 @@ public class DeviceSessionManager {
     }
 
 
-//    //получаем id устройства из параметров сессии
-//   final public String getDeviceIdFromThisSession(WebSocketSession session) {
-//        try {
-//            String query = session.getUri().getQuery();
-//            if (query != null && query.contains("deviceId=")) {
-//                // Получаем значение deviceId
-//                String deviceId_ = query.split("deviceId=")[1];
-//
-//                String deviceId = deviceId_.split("[?&]+$")[1];
-//                // Удаляем символы ? и & в конце строки
-//                deviceId = deviceId.replaceAll("[?&]+$", "");
-//                return deviceId;
-//
-//            }
-//        } catch (Exception e) {
-//            e.printStackTrace();
-//        }
-//        return null;
-//    }
+
 
     public String getTokenFromThisSession(WebSocketSession session) {
         try {

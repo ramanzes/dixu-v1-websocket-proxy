@@ -2,7 +2,6 @@ package com.websocketproxy.controller;
 
 import com.websocketproxy.repository.database.DeviceToken;
 import com.websocketproxy.services.DeviceTokenService;
-import com.websocketproxy.services.TokenAuthenticationService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -18,17 +17,19 @@ import java.util.concurrent.atomic.AtomicLong;
 //возможно это будет приватный метод внутренний который будет вызываться из
 //авторизации
 
+//токен сохраняется в базу данных с привязкой к id пользователя. и передаётся пользователю в браузер.
+//это нужно будет сделать только для зарегистрированных пользователей.
+//а также записывать это в учётную запись пользователя. и при повторном вызове менять токен, но не менять deviceid
+
 @RestController
 @RequestMapping("/api/auth")
 public class TokenController {
 
-    private final TokenAuthenticationService tokenAuthService;
     private final AtomicLong deviceIdCounter = new AtomicLong(1); // Счетчик для генерации deviceId
     private DeviceTokenService deviceTokenService;
 
     @Autowired
-    public TokenController(TokenAuthenticationService tokenAuthService, DeviceTokenService deviceTokenService) {
-        this.tokenAuthService = tokenAuthService;
+    public TokenController( DeviceTokenService deviceTokenService) {
         this.deviceTokenService = deviceTokenService;
     }
 

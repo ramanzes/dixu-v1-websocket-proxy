@@ -1,8 +1,6 @@
 package com.websocketproxy.repository.database;
 
 
-import com.websocketproxy.services.DeviceTokenService;
-import com.websocketproxy.services.TokenAuthenticationService;
 import jakarta.persistence.*;
 
 @Entity

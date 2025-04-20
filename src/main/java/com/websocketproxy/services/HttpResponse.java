@@ -222,165 +222,296 @@ private boolean isThisRedirect(int statusCode){
     return false;
 }
 
-    //метод для обработки ответа устройства
-    public ResponseEntity<?> processDeviceResponse(String requestId, WebSocketProxyHandler webSocketProxyHandler, MyWebsocketUtils myWebsocketUtils) throws Exception {
+//    //метод для обработки ответа устройства
+//    public ResponseEntity<?> processDeviceResponse(String requestId, WebSocketProxyHandler webSocketProxyHandler, MyWebsocketUtils myWebsocketUtils) throws Exception {
+//        // Ждем ответ от устройства
+//        CompletableFuture<String> textResponseFuture = webSocketProxyHandler.waitForResponse(requestId);
+//        //ассинхронно дожидаемся получения всех данных по отправленному с контроллера запроса
+//
+//        //на проде нужно добавить этот лимит ожидания!!!!
+////        String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
+//        String textResponse = textResponseFuture.get();
+//        //здесь я имею первые заголовки ответа по которым можно сказать какие методы сжатия поддерживает устройство
+//
+//
+//        // Извлекаем заголовки и тело текстового ответа
+//
+//        HttpHeaders responseHeaders = HttpResponse.extractHeaders(textResponse);
+//        String deviceId = HttpUtils.extractDeviceId(requestId);
+//        Devices thisDevice = myWebsocketUtils.getDeviceSessionManager().getThisDevice(deviceId);
+//
+//
+//
+//
+//        // !!!! веб-сервер в каждом ответе может решать, что данные можно не сжимать например если они слишком малы,
+//        // но при этом он поддерживает сжатие, т.е. сжатие относится не к локальному серверу устройства, а к каждому ответу на запрос
+//
+//        Set<String> methodThisResponseCompress = myWebsocketUtils.getSupportedCompressionMethods(responseHeaders);
+//
+//        //устанавливаем устройству флаг (не)/поддержки сжатия. только в том случае если флаг для устройства ещё не был ни в одном из ответов установлен.
+//        //это можно использовать в пост данных.
+//
+//        //этот ответ сжат?
+//        boolean thisResponseCompress = !methodThisResponseCompress.isEmpty();
+//
+//        //если стоят дефолтные параметры т.е. запускаем метод установки новых значений
+//        if (!thisDevice.getLocalservWithCompress() && thisResponseCompress)
+//
+//            //ТУТ ЗНАЧЕНИЕ thisDevice.getLocalservWithCompress() МОЖЕТ В ПЕРВЫЙ И ЕДИНСТВЕННЫЙ РАЗ ИЗМЕНИТЬСЯ
+//            thisDevice.setMethodCompress(methodThisResponseCompress);
+//
+//        //здесь у нас есть понимание данный ответ сжат или нет methodThisResponseCompress.isEmpty()
+//        //а также поддерживает ли устройство в принципе сжатие thisDevice.getLocalservWithCompress()
+//
+//        //если устройство поддерживает сжатие но данные ответ не сжат, значит мы его проксируем как есть доверяя правилам локального сервера устройства на этом поприще
+//        //если же устройство не поддерживает сжатие, то на клиенте логика должна быть такова что ответ(при необходимости) будет сжат если не локальным сервером, то самим клиентом
+//
+//        //!!!! А ЗНАЧИТ НАМ ВООБЩЕ НЕ ОБЯЗАТЕЛЬНО ЗНАТЬ О ВОЗМОЖНОСТЯХ ЛОКАЛЬНОГО СЕРВЕРА ПО ВОПРОСУ СЖАТИЯ !!!!!
+//
+//        String contentType = responseHeaders.getFirst(HttpHeaders.CONTENT_TYPE);
+//        String responseTextBody = HttpResponse.extractBody(textResponse);
+//        int statusCode = HttpResponse.extractStatusCode(textResponse);
+//
+//        byte[] binaryResponse = null;
+//
+//        //!!! разобраться с кэшированными данными и их безошибочным проксированием
+////        if (responseTextBody.length() == 0 && statusCode != 304 && statusCode != 204 && statusCode != 205) {
+//        if (responseTextBody.length() == 0 && !isThisRedirect(statusCode)) {
+//            MyLogger.logServer("Ответ содержит только заголовки." + " значит ждём и бинарные данные");
+//            // Получаем бинарные данные для того же запроса
+//            CompletableFuture<byte[]> binaryResponseFuture = webSocketProxyHandler.waitForBinaryResponse(requestId);
+////            binaryResponse = binaryResponseFuture.get(120, TimeUnit.SECONDS);
+//
+//            binaryResponse = binaryResponseFuture.get();
+//        }
+//
+//        if (binaryResponse == null) {
+//            // Текстовый ответ
+//            MyLogger.logServer("возвращаем текстовый ответ от клиента");
+//
+////            int headerLength = responseHeaders.toString().getBytes().length;
+//
+//
+//    //!!!! убрал модификацию путей, проверяю service worker
+////            String updateBody = HttpResponse.modifyHtmlPaths(responseTextBody, contentType, deviceId);
+//            String updateBody = responseTextBody;
+//
+//
+//
+//            //в кодировке UTF-8 некоторые символы (например, символы из других языков или специальные символы) могут занимать более одного байта.
+//            byte[] bodyBytes = updateBody.getBytes(StandardCharsets.UTF_8);
+//
+////при передачи файлов нужно указывать только размер символов у файла, без заголовков. видимо
+//            //            int newContentLength = headerLength + bodyBytes.length;
+//
+//            int newContentLength = bodyBytes.length;
+//
+//            responseHeaders.setContentLength(newContentLength);
+//
+//            // Получаем первое значение заголовка Location
+//            List<String> locationValues = responseHeaders.get(HttpHeaders.LOCATION);
+//            String location = (locationValues != null && !locationValues.isEmpty()) ? locationValues.get(0) : "";
+//
+//            responseHeaders.setLocation(URI.create("/p/"+deviceId+location));
+////            responseHeaders.remove("Content-Length");
+////            responseHeaders.set("Transfer-Encoding", "chunked");
+//
+//
+//
+////вот здесь нужно изменять заголовки редиректа 302 и вообще чтобы был редирект
+//
+//
+//
+//
+//// Универсальное решение, сохраняющее оригинальный статус-код
+//            return ResponseEntity.status(statusCode)
+//                    .headers(responseHeaders)
+//                    .body(updateBody.getBytes(StandardCharsets.UTF_8));
+//
+//        } else {
+//            try {
+//                MyLogger.logServer("Возвращаем бинарный ответ от клиента, contentType: " + contentType, true);
+//
+//                MediaType mediaType;
+//                try {
+//                    mediaType = MediaType.valueOf(contentType);
+//                } catch (InvalidMediaTypeException e) {
+//                    throw new IllegalArgumentException("Некорректный contentType: " + contentType, e);
+//                }
+//
+//                Object body = null;
+//                //здесь после первого запроса должны быть данные об устройстве
+//                // !!!НО САМ ОТВЕТ МОЖЕТ БЫТЬ И НЕ СЖАТ ЕСЛИ ОН МЕНЬШЕ ЧЕМ НУЖНО ДЛЯ ЭТОГО
+//                // нужно работать с каждым ответом по этому вопросу отдельно !!!!
+////                if (thisDevice.getLocalservWithCompress()) {
+//
+//                if (thisResponseCompress){
+//
+//                //!!! ТАКЖЕ СТОИТ УЧИТЫВАТЬ ПОДДЕРЖИВАЕТ ЛИ БРАУЗЕР ПОЛЬЗОВАТЕЛЯ СЖАТЫЙ КОНТЕНТ, Т.Е. БЫЛИ ЗАПРОС НА СЖАТИЕ
+//                // И ТОЛЬКО В ТОМ СЛУЧАЕ ЕСЛИ ЕГО НЕ БЫЛО РАСЖИМАТЬ. ИНАЧЕ ЕСЛИ И ЛОКАЛЬНЫЙ СЕРВЕР И БРАУЗЕР ПОЛЬЗОВАТЕЛЯ ПОДДЕРЖИВАЕТ ОТДАВАТЬ КАК ЕСТЬ СЖАТЫЙ
+//                // ОДНАКО ЕСЛИ НЕ ПОДДЕРЖИВАЕТ ЛОКАЛЬНЫЙ СЕРВЕР, но браузер запрашивал сжатие, мы должны сформировать
+//                // тело ответа из своего метода сжатия по сокету и отдать его по стандарту http
+//
+//                    MyLogger.logServer("Данные сжаты, разжимаем...:\n");
+//
+//                    //!!!! убрал распаковку проверя service worker
+////                    body = decompress(binaryResponse, responseHeaders);
+//
+//                    body = binaryResponse;
+////после распаковки убираем в заголовках отметки о том что контент сжат
+//
+//
+//                    //!!! убрал распаковку проверя service worker
+////                    responseHeaders.remove("Content-Encoding");
+////                    responseHeaders.remove("Transfer-Encoding");
+//                } else {
+//                    body = binaryResponse;
+//                }
+//
+//                if (body instanceof String) {
+////                    String updateBody = HttpResponse.modifyHtmlPaths((String) body, contentType, deviceId);
+//                    String updateBody = (String) body;
+//                    byte[] textBytes = updateBody.getBytes(StandardCharsets.UTF_8);
+//
+//                    //после распаковки длина контента работает только без учёта заголовков
+//                    responseHeaders.setContentLength(textBytes.length);
+//                    long  contentLength = (long)(HttpUtils.getHeadersSize(responseHeaders) + textBytes.length);
+////                    responseHeaders.setContentLength(contentLength);
+//                    MyLogger.logServer("размер после распаковки без заголовков Content-Length "+String.valueOf(textBytes.length));
+//                    MyLogger.logServer("размер после распаковки с заголовками Content-Length "+contentLength);
+//
+//
+//
+//
+//                    return ResponseEntity.status(statusCode)
+//                            .headers(responseHeaders)
+//                            .body(textBytes);
+//                } else {
+//
+//                    return ResponseEntity.status(statusCode)
+//                            .headers(responseHeaders)
+//                            .contentType(mediaType)
+//                            .body((byte[]) body);
+//                }
+//            } catch (Exception e) {
+//                MyLogger.logServer("Ошибка при формировании ответа: " + e.getMessage());
+//                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error while processing binary response".getBytes(StandardCharsets.UTF_8));
+//            }
+//        }
+//    }
+
+
+    public ResponseEntity processDeviceResponse(String requestId, WebSocketProxyHandler webSocketProxyHandler, MyWebsocketUtils myWebsocketUtils) throws Exception {
         // Ждем ответ от устройства
         CompletableFuture<String> textResponseFuture = webSocketProxyHandler.waitForResponse(requestId);
         //ассинхронно дожидаемся получения всех данных по отправленному с контроллера запроса
-
         //на проде нужно добавить этот лимит ожидания!!!!
-//        String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
+        // String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
         String textResponse = textResponseFuture.get();
+
         //здесь я имею первые заголовки ответа по которым можно сказать какие методы сжатия поддерживает устройство
-
-
         // Извлекаем заголовки и тело текстового ответа
-
         HttpHeaders responseHeaders = HttpResponse.extractHeaders(textResponse);
         String deviceId = HttpUtils.extractDeviceId(requestId);
         Devices thisDevice = myWebsocketUtils.getDeviceSessionManager().getThisDevice(deviceId);
 
-        // !!!! веб-сервер в каждом ответе может решать, что данные можно не сжимать например если они слишком малы,
-        // но при этом он поддерживает сжатие, т.е. сжатие относится не к локальному серверу устройства, а к каждому ответу на запрос
-
+        // Определяем методы сжатия для текущего ответа
         Set<String> methodThisResponseCompress = myWebsocketUtils.getSupportedCompressionMethods(responseHeaders);
-
         //устанавливаем устройству флаг (не)/поддержки сжатия. только в том случае если флаг для устройства ещё не был ни в одном из ответов установлен.
-        //это можно использовать в пост данных.
-
-        //этот ответ сжат?
         boolean thisResponseCompress = !methodThisResponseCompress.isEmpty();
 
         //если стоят дефолтные параметры т.е. запускаем метод установки новых значений
-        if (!thisDevice.getLocalservWithCompress() && thisResponseCompress)
+        if (!thisDevice.getLocalservWithCompress() && thisResponseCompress) {
             //ТУТ ЗНАЧЕНИЕ thisDevice.getLocalservWithCompress() МОЖЕТ В ПЕРВЫЙ И ЕДИНСТВЕННЫЙ РАЗ ИЗМЕНИТЬСЯ
             thisDevice.setMethodCompress(methodThisResponseCompress);
-
-        //здесь у нас есть понимание данный ответ сжат или нет methodThisResponseCompress.isEmpty()
-        //а также поддерживает ли устройство в принципе сжатие thisDevice.getLocalservWithCompress()
-
-        //если устройство поддерживает сжатие но данные ответ не сжат, значит мы его проксируем как есть доверяя правилам локального сервера устройства на этом поприще
-        //если же устройство не поддерживает сжатие, то на клиенте логика должна быть такова что ответ(при необходимости) будет сжат если не локальным сервером, то самим клиентом
-
-        //!!!! А ЗНАЧИТ НАМ ВООБЩЕ НЕ ОБЯЗАТЕЛЬНО ЗНАТЬ О ВОЗМОЖНОСТЯХ ЛОКАЛЬНОГО СЕРВЕРА ПО ВОПРОСУ СЖАТИЯ !!!!!
+        }
 
         String contentType = responseHeaders.getFirst(HttpHeaders.CONTENT_TYPE);
         String responseTextBody = HttpResponse.extractBody(textResponse);
         int statusCode = HttpResponse.extractStatusCode(textResponse);
 
-        byte[] binaryResponse = null;
+        // Проверка наличия/действительности Content-Encoding заголовка - НОВАЯ ПРОВЕРКА
+        String contentEncoding = responseHeaders.getFirst(HttpHeaders.CONTENT_ENCODING);
+        // Передаем Content-Encoding только если ответ действительно сжат
+        if (!thisResponseCompress && contentEncoding != null) {
+            // Если ответ не сжат, но заголовок присутствует - это может вызвать ошибку в браузере
+            responseHeaders.remove(HttpHeaders.CONTENT_ENCODING);
+        }
 
+        byte[] binaryResponse = null;
         //!!! разобраться с кэшированными данными и их безошибочным проксированием
-//        if (responseTextBody.length() == 0 && statusCode != 304 && statusCode != 204 && statusCode != 205) {
-        if (responseTextBody.length() == 0 && !isThisRedirect(statusCode)) {
+        // if (responseTextBody.length() == 0 && statusCode != 304 && statusCode != 204 && statusCode != 205) {
+        if (responseTextBody.length() == 0 && !isThisRedirect(statusCode) && statusCode != 304  && statusCode < 400) {
             MyLogger.logServer("Ответ содержит только заголовки." + " значит ждём и бинарные данные");
             // Получаем бинарные данные для того же запроса
             CompletableFuture<byte[]> binaryResponseFuture = webSocketProxyHandler.waitForBinaryResponse(requestId);
-            binaryResponse = binaryResponseFuture.get(120, TimeUnit.SECONDS);
-
-//            binaryResponse = binaryResponseFuture.get();
+            // binaryResponse = binaryResponseFuture.get(120, TimeUnit.SECONDS);
+            binaryResponse = binaryResponseFuture.get();
         }
 
         if (binaryResponse == null) {
             // Текстовый ответ
             MyLogger.logServer("возвращаем текстовый ответ от клиента");
+            String updateBody = responseTextBody;
 
-//            int headerLength = responseHeaders.toString().getBytes().length;
-            String updateBody = HttpResponse.modifyHtmlPaths(responseTextBody, contentType, deviceId);
-
-            //в кодировке UTF-8 некоторые символы (например, символы из других языков или специальные символы) могут занимать более одного байта.
             byte[] bodyBytes = updateBody.getBytes(StandardCharsets.UTF_8);
-
-//при передачи файлов нужно указывать только размер символов у файла, без заголовков. видимо
-            //            int newContentLength = headerLength + bodyBytes.length;
-
             int newContentLength = bodyBytes.length;
-
             responseHeaders.setContentLength(newContentLength);
 
-            // Получаем первое значение заголовка Location
+            // Обработка заголовка Location для редиректов
             List<String> locationValues = responseHeaders.get(HttpHeaders.LOCATION);
-            String location = (locationValues != null && !locationValues.isEmpty()) ? locationValues.get(0) : "";
+            if (locationValues != null && !locationValues.isEmpty()) {
+                String location = locationValues.get(0);
+                // Префикс добавляем только если Location не начинается с /p/{deviceId}
+                if (!location.startsWith("/p/" + deviceId)) {
+                    responseHeaders.setLocation(URI.create("/p/" + deviceId + location));
+                }
+            }
 
-            responseHeaders.setLocation(URI.create("/p/"+deviceId+location));
-//            responseHeaders.remove("Content-Length");
-//            responseHeaders.set("Transfer-Encoding", "chunked");
-
-
-
-//вот здесь нужно изменять заголовки редиректа 302 и вообще чтобы был редирект
-
-
-
-
-// Универсальное решение, сохраняющее оригинальный статус-код
             return ResponseEntity.status(statusCode)
                     .headers(responseHeaders)
-                    .body(updateBody.getBytes(StandardCharsets.UTF_8));
-
+                    .body(bodyBytes);
         } else {
             try {
                 MyLogger.logServer("Возвращаем бинарный ответ от клиента, contentType: " + contentType, true);
-
                 MediaType mediaType;
                 try {
                     mediaType = MediaType.valueOf(contentType);
                 } catch (InvalidMediaTypeException e) {
-                    throw new IllegalArgumentException("Некорректный contentType: " + contentType, e);
+                    // Если Content-Type некорректный, используем application/octet-stream
+                    mediaType = MediaType.APPLICATION_OCTET_STREAM;
+                    MyLogger.logServer("Некорректный contentType: " + contentType + ", используем application/octet-stream");
                 }
 
-                Object body = null;
-                //здесь после первого запроса должны быть данные об устройстве
-                // !!!НО САМ ОТВЕТ МОЖЕТ БЫТЬ И НЕ СЖАТ ЕСЛИ ОН МЕНЬШЕ ЧЕМ НУЖНО ДЛЯ ЭТОГО
-                // нужно работать с каждым ответом по этому вопросу отдельно !!!!
-//                if (thisDevice.getLocalservWithCompress()) {
+                byte[] body = binaryResponse;
 
-                if (thisResponseCompress){
-
-                //!!! ТАКЖЕ СТОИТ УЧИТЫВАТЬ ПОДДЕРЖИВАЕТ ЛИ БРАУЗЕР ПОЛЬЗОВАТЕЛЯ СЖАТЫЙ КОНТЕНТ, Т.Е. БЫЛИ ЗАПРОС НА СЖАТИЕ
-                // И ТОЛЬКО В ТОМ СЛУЧАЕ ЕСЛИ ЕГО НЕ БЫЛО РАСЖИМАТЬ. ИНАЧЕ ЕСЛИ И ЛОКАЛЬНЫЙ СЕРВЕР И БРАУЗЕР ПОЛЬЗОВАТЕЛЯ ПОДДЕРЖИВАЕТ ОТДАВАТЬ КАК ЕСТЬ СЖАТЫЙ
-                // ОДНАКО ЕСЛИ НЕ ПОДДЕРЖИВАЕТ ЛОКАЛЬНЫЙ СЕРВЕР, но браузер запрашивал сжатие, мы должны сформировать
-                // тело ответа из своего метода сжатия по сокету и отдать его по стандарту http
-
-                    MyLogger.logServer("Данные сжаты, разжимаем...:\n");
-                    body = decompress(binaryResponse, responseHeaders);
-//после распаковки убираем в заголовках отметки о том что контент сжат
-                    responseHeaders.remove("Content-Encoding");
-                    responseHeaders.remove("Transfer-Encoding");
-                } else {
-                    body = binaryResponse;
+                // В случае если ответ сжат, просто передаем его как есть,
+                // включая оригинальные заголовки сжатия (Content-Encoding)
+                if (thisResponseCompress) {
+                    MyLogger.logServer("Данные сжаты, передаем как есть с сохранением Content-Encoding");
+                    // Проверяем, соответствует ли указанный Content-Encoding доступным методам сжатия
+                    if (contentEncoding != null && !methodThisResponseCompress.contains(contentEncoding)) {
+                        MyLogger.logServer("Внимание: Content-Encoding '" + contentEncoding +
+                                "' не соответствует поддерживаемым методам: " + methodThisResponseCompress);
+                    }
                 }
 
-                if (body instanceof String) {
-                    String updateBody = HttpResponse.modifyHtmlPaths((String) body, contentType, deviceId);
-                    byte[] textBytes = updateBody.getBytes(StandardCharsets.UTF_8);
+                // Установка правильного Content-Length
+                responseHeaders.setContentLength(body.length);
 
-                    //после распаковки длина контента работает только без учёта заголовков
-                    responseHeaders.setContentLength(textBytes.length);
-                    long  contentLength = (long)(HttpUtils.getHeadersSize(responseHeaders) + textBytes.length);
-//                    responseHeaders.setContentLength(contentLength);
-                    MyLogger.logServer("размер после распаковки без заголовков Content-Length "+String.valueOf(textBytes.length));
-                    MyLogger.logServer("размер после распаковки с заголовками Content-Length "+contentLength);
-
-
-
-
-                    return ResponseEntity.status(statusCode)
-                            .headers(responseHeaders)
-                            .body(textBytes);
-                } else {
-
-                    return ResponseEntity.status(statusCode)
-                            .headers(responseHeaders)
-                            .contentType(mediaType)
-                            .body((byte[]) body);
-                }
+                return ResponseEntity.status(statusCode)
+                        .headers(responseHeaders)
+                        .contentType(mediaType)
+                        .body(body);
             } catch (Exception e) {
                 MyLogger.logServer("Ошибка при формировании ответа: " + e.getMessage());
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error while processing binary response".getBytes(StandardCharsets.UTF_8));
+                e.printStackTrace(); // Добавлено для лучшей диагностики
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body("Error while processing binary response".getBytes(StandardCharsets.UTF_8));
             }
         }
     }
+
 
 
 }

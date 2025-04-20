@@ -54,6 +54,19 @@ public class DeviceTokenService {
     }
 
 
+    /**
+     * Validates a token for a specific deviceId
+     *
+     * @param deviceId The device identifier
+     * @param token The token to validate
+     * @return true if token is valid, false otherwise
+     */
+    public boolean validateToken(String deviceId, String token) {
+
+        return getTokenByDeviceId(deviceId).equals(token);
+
+    }
+
 //    @Transactional
 //    public DeviceToken createNewDeviceToken() {
 //        DeviceToken deviceToken = new DeviceToken();

@@ -1,9 +1,13 @@
 package com.websocketproxy.config;
 
+import com.websocketproxy.services.HttpUtils;
+import com.websocketproxy.services.logsandexceptions.MyLogger;
 import com.websocketproxy.services.logsandexceptions.exceptions.MyOtherExceptions;
 import com.websocketproxy.websocket.WebSocketProxyHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.socket.config.annotation.*;
 
@@ -13,6 +17,7 @@ import java.util.Properties;
 
 @Configuration
 @EnableWebSocket
+@Order(Ordered.HIGHEST_PRECEDENCE)  // Обрабатывается первым
 public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBrokerConfigurer {
    private static int BUFFER_SIZE;
    private static int COMPRESSMINSIZE;
@@ -82,6 +87,7 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
         // Регистрируем WebSocketProxyHandler на /device-ws
         registry.addHandler(webSocketProxyHandler, "/ws")
                 .setAllowedOrigins("*");  // Разрешаем запросы с любых доменов
+                MyLogger.logServer("WebSocket handler registered for /ws");
 //         .setAllowedOriginPatterns("http://localhost:*", "https://*.example.com", "172.16.42.1");
 //                .setAllowedOriginPatterns("https://*.example.com", "http://localhost:*","0.0.0.0","127.0.0.1") // Используем allowedOriginPatterns
 //                .setAllowedOrigins(null) // Полностью отключаем проверку источников

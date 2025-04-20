@@ -8,6 +8,8 @@ import com.websocketproxy.services.logsandexceptions.MyLogger;
 import com.websocketproxy.services.HttpRequest;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.*;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
@@ -27,9 +29,14 @@ import static com.websocketproxy.config.WebSocketConfig.*;
 
 
 @Controller
+@Order(Ordered.HIGHEST_PRECEDENCE)  // Обрабатывается первым
 @RequestMapping(
         value = "/p"
 )
+//@RequestMapping(
+//        value = {"/"}
+//)
+
 @SessionAttributes("userSessionManager")  // Связываем сессию с пользователем
 public class ProxyController {
 
@@ -60,6 +67,8 @@ public class ProxyController {
         value = "/{deviceId}/**",
         method = {RequestMethod.GET}
 )
+
+
 public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
                                            HttpServletRequest request, HttpSession session)  // Получаем HTTP-сессию пользователя
  {
@@ -114,13 +123,81 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
         // Вызываем метод для обработки ответа устройства
         ResponseEntity<byte[]> response = (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,webSocketProxyHandler,myWebsocketUtils);
 
-        return response;
+
+        // Добавляем заголовок с базовым URL
+        HttpHeaders headers = new HttpHeaders();
+        headers.putAll(response.getHeaders());
+        headers.set("this-actual-base", "/p/" + deviceId + "/");
+
+        // Для HTML-ответов добавляем скрипт регистрации SW
+        if (response.getHeaders().getContentType() != null &&
+                response.getHeaders().getContentType().includes(MediaType.TEXT_HTML)) {
+
+            String body = new String((byte[]) response.getBody(), StandardCharsets.UTF_8);
+//            String swScript = """
+//                <script>
+//                if ('serviceWorker' in navigator && !navigator.serviceWorker.controller) {
+//                    navigator.serviceWorker.register('/p/sw.js', { scope: '/p/' })
+//                        .then(reg => console.log('SW registered for scope:', reg.scope))
+//                        .catch(err => console.error('SW registration failed:', err));
+//                }
+//                </script>
+//                """;
+//
+//            body = body.replace("</body>", swScript + "</body>");
+
+            return ResponseEntity.status(response.getStatusCode())
+                    .headers(headers)
+                    .body(body.getBytes(StandardCharsets.UTF_8));
+        }
+
+        return ResponseEntity.status(response.getStatusCode())
+                .headers(headers)
+                .body(response.getBody());
+
+
 
     } catch (Exception e) {
         e.printStackTrace();
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(("Error occurred: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
     }
 }
+
+////внедряем service worker на устройство пользователя
+//    // Скрытый эндпоинт для SW (доступен только по прямому URL)
+//    @GetMapping(value = "/sw.js", produces = "application/javascript")
+//    @ResponseBody
+//    public String getServiceWorkerScript() {
+//        return """
+//            const CACHE_NAME = 'proxy-cache';
+//            let baseUrl = '/p/';
+//
+//            self.addEventListener('install', e => self.skipWaiting());
+//            self.addEventListener('activate', e => self.clients.claim());
+//
+//            self.addEventListener('fetch', e => {
+//                if (e.request.mode === 'navigate') {
+//                    e.respondWith(
+//                        fetch(e.request).then(response => {
+//                            const newBase = response.headers.get('this-actual-base');
+//                            if (newBase) {
+//                                baseUrl = newBase;
+//                                return response.text().then(html => {
+//                                    return new Response(
+//                                        html.replace('<head>', '<head><base href="' + baseUrl + '">'),
+//                                        { headers: response.headers }
+//                                    );
+//                                });
+//                            }
+//                            return response;
+//                        })
+//                    );
+//                }
+//            });
+//            """;
+//    }
+
+
 
 //обработка POST запросов для типа контента без multipart
 @PostMapping(
