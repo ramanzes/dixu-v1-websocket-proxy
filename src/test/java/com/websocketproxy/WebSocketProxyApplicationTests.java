@@ -1,4 +1,4 @@
-package com.example.websocketproxy;
+package com.websocketproxy;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
