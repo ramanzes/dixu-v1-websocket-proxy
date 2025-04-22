@@ -405,7 +405,7 @@ private boolean isThisRedirect(int statusCode){
         // Ждем ответ от устройства
         CompletableFuture<String> textResponseFuture = webSocketProxyHandler.waitForResponse(requestId);
         //ассинхронно дожидаемся получения всех данных по отправленному с контроллера запроса
-        //на проде нужно добавить этот лимит ожидания!!!!
+      //на проде нужно добавить этот лимит ожидания!!!!
         // String textResponse = textResponseFuture.get(120, TimeUnit.SECONDS);
         String textResponse = textResponseFuture.get();
 

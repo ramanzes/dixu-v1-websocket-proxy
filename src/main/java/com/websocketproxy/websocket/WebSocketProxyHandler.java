@@ -711,7 +711,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
               "type": "object",
               "required": ["requestId", "data", "isLast"],
               "properties": {
-                "requestId": {"type": "stringn"},
+                "requestId": {"type": "string"},
                 "data": {"type": "string"},
                 "isLast": {"type": "boolean"}
               }

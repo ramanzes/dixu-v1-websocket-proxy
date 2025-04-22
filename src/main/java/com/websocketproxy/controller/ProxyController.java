@@ -123,37 +123,38 @@ public ResponseEntity<byte[]> proxyRequest(@PathVariable String deviceId,
         // Вызываем метод для обработки ответа устройства
         ResponseEntity<byte[]> response = (ResponseEntity<byte[]>) httpResponse.processDeviceResponse(requestId,webSocketProxyHandler,myWebsocketUtils);
 
+        return response;
 
-        // Добавляем заголовок с базовым URL
-        HttpHeaders headers = new HttpHeaders();
-        headers.putAll(response.getHeaders());
-        headers.set("this-actual-base", "/p/" + deviceId + "/");
-
-        // Для HTML-ответов добавляем скрипт регистрации SW
-        if (response.getHeaders().getContentType() != null &&
-                response.getHeaders().getContentType().includes(MediaType.TEXT_HTML)) {
-
-            String body = new String((byte[]) response.getBody(), StandardCharsets.UTF_8);
-//            String swScript = """
-//                <script>
-//                if ('serviceWorker' in navigator && !navigator.serviceWorker.controller) {
-//                    navigator.serviceWorker.register('/p/sw.js', { scope: '/p/' })
-//                        .then(reg => console.log('SW registered for scope:', reg.scope))
-//                        .catch(err => console.error('SW registration failed:', err));
-//                }
-//                </script>
-//                """;
+//        // Добавляем заголовок с базовым URL
+//        HttpHeaders headers = new HttpHeaders();
+//        headers.putAll(response.getHeaders());
+//        headers.set("this-actual-base", "/p/" + deviceId + "/");
 //
-//            body = body.replace("</body>", swScript + "</body>");
+//        // Для HTML-ответов добавляем скрипт регистрации SW
+//        if (response.getHeaders().getContentType() != null &&
+//                response.getHeaders().getContentType().includes(MediaType.TEXT_HTML)) {
+//
+//            String body = new String((byte[]) response.getBody(), StandardCharsets.UTF_8);
+////            String swScript = """
+////                <script>
+////                if ('serviceWorker' in navigator && !navigator.serviceWorker.controller) {
+////                    navigator.serviceWorker.register('/p/sw.js', { scope: '/p/' })
+////                        .then(reg => console.log('SW registered for scope:', reg.scope))
+////                        .catch(err => console.error('SW registration failed:', err));
+////                }
+////                </script>
+////                """;
+////
+////            body = body.replace("</body>", swScript + "</body>");
+//
+//            return ResponseEntity.status(response.getStatusCode())
+//                    .headers(headers)
+//                    .body(body.getBytes(StandardCharsets.UTF_8));
+//        }
 
-            return ResponseEntity.status(response.getStatusCode())
-                    .headers(headers)
-                    .body(body.getBytes(StandardCharsets.UTF_8));
-        }
-
-        return ResponseEntity.status(response.getStatusCode())
-                .headers(headers)
-                .body(response.getBody());
+//        return ResponseEntity.status(response.getStatusCode())
+//                .headers(headers)
+//                .body(response.getBody());
 
 
 
