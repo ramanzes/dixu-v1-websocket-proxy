@@ -1,5 +1,78 @@
 # Полная инструкция по развертыванию WebSocket Proxy с самоподписанным сертификатом
 
+## Что это такое и для чего?
+
+**WebSocket Proxy** — это система для удалённого доступа к локальным веб-сервисам через WebSocket туннель. 
+
+### Основная идея:
+
+У вас есть устройство (например, Raspberry Pi, домашний сервер, IoT устройство) с веб-интерфейсом, которое находится за NAT или файрволом. Вместо того чтобы пробрасывать порты или настраивать VPN, вы:
+
+1. **Запускаете клиент** на локальном устройстве
+2. Клиент подключается к **центральному серверу-прокси** через WebSocket (WSS)
+3. **Пользователи обращаются** к серверу-прокси по URL типа `https://ваш-сервер:8443/p/device-14/`
+4. **Сервер-прокси пересылает** запросы через WebSocket клиенту
+5. **Клиент запрашивает** данные с локального веб-сервера и отправляет ответ обратно
+
+### Схема работы:
+
+```
+Браузер пользователя
+       ↓
+https://192.168.122.76:8443/p/device-14/index.html
+       ↓
+[WebSocket Proxy Server] (на публичном сервере)
+       ↓ (через WSS туннель)
+[WebSocket Client] (на локальном устройстве за NAT)
+       ↓
+http://localhost:5000/index.html (локальный веб-сервер)
+       ↓
+Ответ идёт обратно по той же цепочке
+```
+
+### Примеры использования:
+
+- 📡 Удалённый доступ к веб-интерфейсу домашнего сервера
+- 🏠 Управление IoT устройствами (умный дом)
+- 🖥️ Доступ к административным панелям устройств за NAT
+- 🔧 Разработка и тестирование без проброса портов
+- 📹 Доступ к IP-камерам и системам видеонаблюдения
+
+### Как пользоваться после установки:
+
+**Шаг 1:** Убедитесь что сервер запущен
+```bash
+systemctl status websocket-proxy
+```
+
+**Шаг 2:** Получите токен для нового устройства
+```bash
+curl -k https://ваш-сервер:8443/api/auth/token
+```
+
+**Шаг 3:** Настройте клиент на устройстве с полученным `deviceId` и `token`
+
+**Шаг 4:** Запустите клиент
+```bash
+java -jar websocket-client.jar
+```
+
+**Шаг 5:** Откройте в браузере
+```
+https://ваш-сервер:8443/p/ваш-device-id/
+```
+
+Например: `https://192.168.122.76:8443/p/device-14/`
+
+### Безопасность:
+
+- ✅ Все данные идут через HTTPS/WSS (зашифровано SSL/TLS)
+- ✅ Аутентификация через токены
+- ✅ Один deviceId = одно подключение
+- ✅ Нет открытых портов на клиентском устройстве
+
+---
+
 ## Информация о проекте
 
 **Серверная часть:** https://github.com/ramanzes/dixu-v1-websocket-proxy (ветка dev4)  
@@ -61,9 +134,9 @@ mkdir -p /opt/websocket-proxy/certs
 cd /opt/websocket-proxy/certs
 ```
 
-### 2.2 Генерация PKCS12 keystore для сервера
+### 2.2 Генерация PKCS12 keystore для сервера с SAN
 
-**Важно:** Параметры взяты из реального `application.properties`:
+**ВАЖНО:** Современные версии Java требуют наличия **SAN (Subject Alternative Name)** в сертификате!
 
 ```bash
 keytool -genkeypair \
@@ -74,7 +147,8 @@ keytool -genkeypair \
   -storetype PKCS12 \
   -keystore keystore.p12 \
   -storepass DfdyaIKbJl21FWt7Fq8 \
-  -dname "CN=144.31.248.91, OU=WebSocket, O=Dixu, L=Moscow, ST=Moscow, C=RU"
+  -dname "CN=144.31.248.91, OU=WebSocket, O=Dixu, L=Moscow, ST=Moscow, C=RU" \
+  -ext "SAN=IP:144.31.248.91"
 ```
 
 **Что здесь используется:**
@@ -83,6 +157,25 @@ keytool -genkeypair \
 - `-keystore keystore.p12` - из `server.ssl.key-store=classpath:keystore.p12`
 - `-storepass DfdyaIKbJl21FWt7Fq8` - из `server.ssl.key-store-password`
 - `CN=144.31.248.91` - IP адрес сервера в качестве Common Name
+- **`-ext "SAN=IP:144.31.248.91"`** - ⚠️ **КРИТИЧЕСКИ ВАЖНО!** Subject Alternative Name с IP адресом
+
+**Примечание:** Если IP адрес сервера `192.168.122.76`, используйте его вместо `144.31.248.91` и в CN, и в SAN!
+
+### 2.2.1 Проверка наличия SAN в сертификате
+
+```bash
+keytool -list -v \
+  -keystore keystore.p12 \
+  -storetype PKCS12 \
+  -storepass DfdyaIKbJl21FWt7Fq8 | grep -A 3 "SubjectAlternativeName"
+
+# Должно показать:
+# SubjectAlternativeName [
+#   IPAddress: 144.31.248.91
+# ]
+```
+
+Если SAN отсутствует, сертификат НЕ БУДЕТ работать с современными версиями Java!
 
 ### 2.3 Экспорт публичного сертификата
 
@@ -922,14 +1015,56 @@ netstat -tlnp | grep 8443
 ufw status
 ```
 
-**Ошибка: SSL handshake failed**
+**Ошибка: SSL handshake failed / No subject alternative names present**
 
+Это самая частая ошибка! Сертификат не содержит SAN (Subject Alternative Name).
+
+**Решение:**
 ```bash
-# Проверьте сертификат на сервере
-openssl s_client -connect 144.31.248.91:8443 -showcerts
+# Пересоздайте сертификат с SAN
+cd /opt/websocket-proxy/certs
+rm keystore.p12
 
-# Убедитесь, что в application.properties правильно указан keystore
-cat /opt/websocket-proxy/dixu-v1-websocket-proxy/src/main/resources/application.properties | grep ssl
+keytool -genkeypair \
+  -alias tomcat \
+  -keyalg RSA \
+  -keysize 2048 \
+  -validity 3650 \
+  -storetype PKCS12 \
+  -keystore keystore.p12 \
+  -storepass DfdyaIKbJl21FWt7Fq8 \
+  -dname "CN=ВАШ_IP, OU=WebSocket, O=Dixu, L=Moscow, ST=Moscow, C=RU" \
+  -ext "SAN=IP:ВАШ_IP"
+
+# Экспорт и создание truststore
+keytool -exportcert -alias tomcat -keystore keystore.p12 \
+  -storetype PKCS12 -storepass DfdyaIKbJl21FWt7Fq8 -file server-cert.crt
+
+rm client-truststore.jks
+keytool -importcert -alias websocket-server -file server-cert.crt \
+  -keystore client-truststore.jks -storepass changeit -noprompt
+
+# Копирование и перезапуск
+cp keystore.p12 /opt/websocket-proxy/dixu-v1-websocket-proxy/src/main/resources/
+systemctl restart websocket-proxy
+```
+
+**Альтернатива (для тестирования):** Отключите проверку SSL в клиенте
+
+В `WebSocketLayer.java` добавьте вызов в начало метода `connect()`:
+```java
+public void connect() {
+    try {
+        disableSSLCertificateChecking(); // Добавьте эту строку!
+        
+        WebSocketContainer container = ContainerProvider.getWebSocketContainer();
+        // ... остальной код
+```
+
+Затем пересоберите:
+```bash
+cd /opt/dixu-v1-websocket-client
+mvn clean package
 ```
 
 **Ошибка: Close code 4001 (Authentication failed)**
