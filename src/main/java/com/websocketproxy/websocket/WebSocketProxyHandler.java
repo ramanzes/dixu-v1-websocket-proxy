@@ -322,7 +322,7 @@ public class WebSocketProxyHandler extends BinaryWebSocketHandler {
           textMessageBuffersCache.invalidate(requestId);
           requestLocks.remove(requestId);
           MyLogger.logServer("Full response for requestId " + requestId + ": " + fullMessage);
-          if (fullMessage.startsWith("HTTP/1.1")) {
+          if (fullMessage.startsWith("HTTP/1.1") || fullMessage.startsWith("HTTP/1.0")) {
             // Извлекаем заголовки для логирования
             String headers = "";
             int index = fullMessage.indexOf("\r\n\r\n");

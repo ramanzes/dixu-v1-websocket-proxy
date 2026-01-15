@@ -79,7 +79,7 @@ public class WebSocketConfig implements WebSocketConfigurer, WebSocketMessageBro
     // .setAllowedOrigins("*"); // Разрешаем запросы с любых доменов
     // Регистрируем WebSocketProxyHandler на /device-ws
     registry.addHandler(webSocketProxyHandler, "/ws")
-        .setAllowedOrigins("*"); // Разрешаем запросы с любых доменов
+        .setAllowedOrigins("*","https://*.dix.su:444", "https://dix.su:444"); // Разрешаем запросы с любых доменов
     MyLogger.logServer("WebSocket handler registered for /ws");
     // .setAllowedOriginPatterns("http://localhost:*", "https://*.example.com",
     // "172.16.42.1");

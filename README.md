@@ -1,5 +1,205 @@
 # Полная инструкция по развертыванию WebSocket Proxy с самоподписанным сертификатом
 
+
+
+
+
+
+Основная цель — обеспечить работу **WebSocket-прокси** с поддержкой **Cookie** и **сессий** на разных поддоменах (Wildcard), при этом корректно направляя трафик в Java-приложение.
+
+Ниже приведена полная статья-руководство со всеми деталями и полным, не сокращенным конфигом Nginx.
+
+---
+
+# Полная настройка инфраструктуры: Wildcard SSL, Nginx Proxy и Java WebSocket
+
+Эта конфигурация решает проблему единой авторизации (Sticky Sessions/Cookies) между разными поддоменами и обеспечивает стабильную работу WebSocket-соединений.
+
+## 1. Концепция архитектуры
+
+* **Java App:** Слушает на порту `8443` (HTTP). Ожидает запросы с идентификатором устройства в пути (например, `/p/device1/...`).
+* **Nginx:** Выступает в роли SSL-терминатора на порту `444`. Он принимает HTTPS, расшифровывает его и проксирует в Java, сохраняя все заголовки (Headers), необходимые для Cookies и WebSocket.
+* **Certbot + Reg.ru:** Автоматически обновляют Wildcard-сертификат через DNS-проверку, не прерывая работу веб-сервера.
+
+---
+
+## 2. Подготовка SSL (Certbot + API Reg.ru)
+
+Для Wildcard сертификатов (`*.dix.su`) мы используем метод DNS-01.
+
+### Создание окружения и установка плагина
+
+```bash
+python3 -m venv /root/venv
+/root/venv/bin/pip install certbot certbot-dns-regru
+
+```
+
+### Настройка учетных данных (`/etc/letsencrypt/regru.ini`)
+
+```ini
+dns_regru_username = konnik@yandex.ru
+dns_regru_password = password_strong!
+
+```
+
+*Установите права доступа: `chmod 600 /etc/letsencrypt/regru.ini*`
+
+### Скрипт выпуска (`/root/reg_ru_api/renew.certbot.sh`)
+
+```bash
+#!/bin/ash
+/root/venv/bin/certbot certonly \
+  --authenticator dns-regru \
+  --dns-regru-credentials /etc/letsencrypt/regru.ini \
+  --dns-regru-propagation-seconds 600 \
+  -d "dix.su" \
+  -d "*.dix.su" \
+  --non-interactive \
+  --agree-tos \
+  --force-renewal \
+  -m admin@itdid.ru
+
+```
+
+---
+
+## 3. Полный конфиг Nginx (`/etc/nginx/http.d/yourdomain.ru.conf`)
+
+Этот конфиг учитывает работу на порту **444** (из-за конфликта с Xray на 443) и специфику передачи сессий в Java-приложение.
+
+```nginx
+# 1. HTTP → HTTPS (Порт 80 всегда перекидывает на защищенный 444)
+server {
+    listen 80;
+    server_name dix.su *.dix.su;
+    return 301 https://$host:444$request_uri;
+}
+
+# 2. Основной блок для ПОДДОМЕНОВ (*.dix.su)
+server {
+    listen 444 ssl;
+    listen [::]:444 ssl;
+    http2 on;
+
+    # Регулярное выражение извлекает имя поддомена в переменную $device
+    server_name ~^(?<device>.+)\.dix\.su$;
+
+    # Пути к Wildcard сертификатам
+    ssl_certificate /etc/letsencrypt/live/dix.su/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/dix.su/privkey.pem;
+
+    # Безопасность SSL
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+
+    client_max_body_size 100M;
+
+    location / {
+        # Проксирование в Java. Путь формируется динамически: /p/имя_поддомена/путь
+        proxy_pass http://127.0.0.1:8443/p/$device$request_uri;
+        
+        # Передача реальных данных клиента для работы Cookies и Sessions
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Настройки для WebSocket (бесконечные сессии и Upgrade заголовки)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        # Таймауты для длинных соединений (чтобы сокеты не рвались)
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+
+        # Важно для Cookies: пробрасываем заголовки авторизации
+        proxy_pass_header Set-Cookie;
+        proxy_pass_header Cookie;
+    }
+}
+
+# 3. Блок для ГЛАВНОГО ДОМЕНА (dix.su)
+server {
+    listen 444 ssl;
+    listen [::]:444 ssl;
+    http2 on;
+    server_name dix.su;
+
+    ssl_certificate /etc/letsencrypt/live/dix.su/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/dix.su/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+
+    location / {
+        proxy_pass http://127.0.0.1:8443;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        proxy_pass_header Set-Cookie;
+        proxy_pass_header Cookie;
+    }
+}
+
+```
+
+---
+
+## 4. Почему выбран порт 444 и как это проверить?
+
+По умолчанию HTTPS работает на порту **443**. Однако, если на сервере установлен **Xray** или **VPN-шлюз**, маскирующийся под веб-трафик, порт 443 будет занят ими.
+
+### Как проверить занятость портов:
+
+Если Nginx не стартует с ошибкой `Address in use`, выполните:
+
+```bash
+netstat -tulpn | grep :443
+
+```
+
+Если вы видите там `xray`, `docker-proxy` или `ovpn`, значит порт 443 использовать нельзя. Мы выбрали **444**, так как он максимально близок к стандарту, легко запоминается и обычно свободен.
+
+---
+
+## 5. Автоматизация и проверка
+
+Чтобы убедиться, что всё работает:
+
+1. **Проверка конфига Nginx:** `nginx -t`
+2. **Перезапуск:** `service nginx restart`
+3. **Cron-задача:**
+```bash
+0 3 * * * /root/venv/bin/certbot renew --post-hook "service nginx reload" --quiet
+
+```
+
+
+
+**Результат:** Ваше Java-приложение получает чистые запросы с правильными путями, WebSocket-соединения не обрываются через 60 секунд, а Cookies корректно сохраняются для каждого поддомена благодаря Wildcard SSL.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Что это такое и для чего?
 
 **WebSocket Proxy** — это система для удалённого доступа к локальным веб-сервисам через WebSocket туннель. 
